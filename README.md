@@ -51,5 +51,8 @@ See `source_specs/trading/murex_trades.yaml` for a complete example.
 ## Documentation
 
 - [docs/design.md](docs/design.md) — Full architecture, design decisions, failure modes
+- [docs/testing.md](docs/testing.md) — Guide to testing
 - [docs/support_runbook.md](docs/support_runbook.md) — Operational procedures
 - [docs/adding_new_source.md](docs/adding_new_source.md) — Detailed onboarding guide
+- [docs/identity.md](docs/identity.md) — Deep dive on identity management
+- [docs/streaming.md](docs/streaming.md) — Deep dive on streaming
