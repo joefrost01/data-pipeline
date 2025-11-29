@@ -1,0 +1,231 @@
+# Source Specification: Murex Trades
+# 
+# This file defines everything the validator needs to know about
+# incoming Murex trade files: where to find them, how to parse them,
+# what schema to expect, and how to validate them.
+
+name: murex_trades
+description: Trade confirmations from Murex back office system
+owner: trading-systems@company.com
+domain: markets
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Source Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+source:
+  path_pattern: "murex/trades_*.xml"
+  format: xml
+  encoding: utf-8
+  
+  # XML structure
+  root_element: "TradeConfirmations"
+  row_element: "Trade"
+
+xml_config:
+  namespaces:
+    mx: "http://www.murex.com/schema/v1"
+  flatten_nested: true
+  # Handle large files in streaming mode to avoid OOM
+  streaming_threshold_mb: 100
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schema Definition
+# ─────────────────────────────────────────────────────────────────────────────
+
+schema:
+  - name: trade_id
+    description: Murex native trade identifier
+    xpath: "mx:TradeId/text()"
+    type: STRING
+    nullable: false
+    
+  - name: trade_time
+    description: Execution timestamp (UTC)
+    xpath: "mx:ExecutionTime/text()"
+    type: TIMESTAMP
+    format: "ISO8601"
+    nullable: false
+    
+  - name: trade_date
+    description: Trade date
+    xpath: "mx:TradeDate/text()"
+    type: DATE
+    format: "%Y-%m-%d"
+    nullable: false
+    
+  - name: counterparty
+    description: Counterparty legal name
+    xpath: "mx:Counterparty/mx:Name/text()"
+    type: STRING
+    nullable: true
+    
+  - name: counterparty_lei
+    description: Counterparty LEI code
+    xpath: "mx:Counterparty/mx:LEI/text()"
+    type: STRING
+    nullable: true
+    
+  - name: trader_id
+    description: Trader identifier
+    xpath: "mx:Trader/mx:Id/text()"
+    type: STRING
+    nullable: false
+    
+  - name: trader_name
+    description: Trader display name
+    xpath: "mx:Trader/mx:Name/text()"
+    type: STRING
+    nullable: true
+    
+  - name: instrument
+    description: Instrument identifier (ISIN or internal)
+    xpath: "mx:Instrument/mx:Id/text()"
+    type: STRING
+    nullable: false
+    
+  - name: instrument_type
+    description: Asset class
+    xpath: "mx:Instrument/mx:Type/text()"
+    type: STRING
+    nullable: true
+    
+  - name: side
+    description: Trade direction
+    xpath: "mx:Side/text()"
+    type: STRING
+    nullable: false
+    allowed_values: ["BUY", "SELL"]
+    
+  - name: quantity
+    description: Trade quantity
+    xpath: "mx:Quantity/text()"
+    type: INT64
+    nullable: false
+    min_value: 1
+    
+  - name: price
+    description: Execution price
+    xpath: "mx:Price/text()"
+    type: NUMERIC
+    nullable: false
+    min_value: 0
+    
+  - name: currency
+    description: Settlement currency
+    xpath: "mx:Currency/text()"
+    type: STRING
+    nullable: false
+    
+  - name: book_id
+    description: Trading book identifier
+    xpath: "mx:Book/mx:Id/text()"
+    type: STRING
+    nullable: false
+    
+  - name: book_name
+    description: Trading book name
+    xpath: "mx:Book/mx:Name/text()"
+    type: STRING
+    nullable: true
+    
+  - name: status
+    description: Trade lifecycle status
+    xpath: "mx:Status/text()"
+    type: STRING
+    nullable: false
+    allowed_values: ["NEW", "AMENDED", "CANCELLED"]
+    
+  - name: version
+    description: Amendment version number
+    xpath: "mx:Version/text()"
+    type: INT64
+    nullable: true
+    default: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Control File
+# ─────────────────────────────────────────────────────────────────────────────
+
+control_file:
+  # Murex sends a sidecar XML with row counts
+  type: sidecar_xml
+  pattern: "{filename}_ctrl.xml"  # trades_20251128.xml → trades_20251128_ctrl.xml
+  xpath_row_count: "/ControlFile/RecordCount/text()"
+  xpath_checksum: "/ControlFile/Checksum/text()"  # Optional MD5
+  required: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Expectations
+# ─────────────────────────────────────────────────────────────────────────────
+
+expectations:
+  frequency: daily
+  expected_by: "06:00"  # UTC
+  min_files_per_day: 1
+  max_files_per_day: 5  # Occasional intraday resends
+  
+  # Typical volumes (for anomaly detection baseline)
+  typical_row_count:
+    min: 50000
+    max: 200000
+    
+  # Alert if file is larger than this (might indicate corruption or wrong file)
+  max_file_size_mb: 500
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation Rules
+# ─────────────────────────────────────────────────────────────────────────────
+
+validation:
+  # Row-level validation (quarantine failures, continue processing)
+  row_level:
+    - rule: "trade_id is not null"
+      severity: error
+      
+    - rule: "trade_time is not null"
+      severity: error
+      
+    - rule: "quantity > 0"
+      severity: error
+      
+    - rule: "price >= 0"
+      severity: error
+      
+    - rule: "side in ('BUY', 'SELL')"
+      severity: error
+      
+    - rule: "trade_time <= current_timestamp()"
+      severity: warning  # Future timestamps are suspicious but not fatal
+      
+  # File-level validation (fail entire file if violated)
+  file_level:
+    - rule: "row_count matches control file"
+      severity: error
+      
+    - rule: "row_count > 0"
+      severity: error
+      
+    - rule: "no duplicate trade_id within file"
+      severity: error
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Processing Hints
+# ─────────────────────────────────────────────────────────────────────────────
+
+processing:
+  # Deterministic ID generation
+  identity:
+    domain: "markets"
+    source_system: "MUREX"
+    source_id_field: "trade_id"
+    
+  # Deduplication strategy for amendments
+  deduplication:
+    key: ["trade_id"]
+    strategy: "latest_version"  # Keep highest version number
+    version_field: "version"
+    
+  # Partition hint for BigQuery
+  partition_field: "trade_date"
+  cluster_fields: ["trader_id", "book_id"]
