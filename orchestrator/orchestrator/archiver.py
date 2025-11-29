@@ -16,6 +16,55 @@ from orchestrator.orchestrator.config import Config
 log = structlog.get_logger()
 
 
+def normalise_gcs_path(path: str) -> str:
+    """Normalise a GCS path for consistent comparison.
+    
+    Handles:
+    - URL encoding differences
+    - Trailing slashes
+    - Double slashes
+    - gs:// prefix presence/absence
+    
+    Args:
+        path: A GCS path (with or without gs:// prefix)
+        
+    Returns:
+        Normalised path in format: bucket/object/path
+    """
+    from urllib.parse import unquote
+    
+    # URL decode
+    path = unquote(path)
+    
+    # Remove gs:// prefix if present
+    if path.startswith("gs://"):
+        path = path[5:]
+    
+    # Remove leading/trailing slashes
+    path = path.strip("/")
+    
+    # Collapse multiple slashes
+    while "//" in path:
+        path = path.replace("//", "/")
+    
+    return path
+
+
+def extract_blob_name_from_path(gcs_path: str) -> str:
+    """Extract the blob name (object path) from a full GCS path.
+    
+    Args:
+        gcs_path: Full GCS path like 'gs://bucket/path/to/file.parquet'
+        
+    Returns:
+        Blob name like 'path/to/file.parquet'
+    """
+    normalised = normalise_gcs_path(gcs_path)
+    # Skip the bucket name (first component)
+    parts = normalised.split("/", 1)
+    return parts[1] if len(parts) > 1 else ""
+
+
 @dataclass
 class ArchiveResult:
     """Result of archive operation."""
@@ -41,8 +90,17 @@ class Archiver:
                 successfully validated in this run. Only these files will be archived.
         """
         self.config = config
-        self.validated_output_paths = validated_output_paths
+        # Normalise all validated paths for consistent comparison
+        self._validated_blob_names = {
+            extract_blob_name_from_path(p) for p in validated_output_paths
+        }
         self.storage_client = storage.Client()
+        
+        log.debug(
+            "archiver_initialised",
+            validated_count=len(self._validated_blob_names),
+            sample_paths=list(self._validated_blob_names)[:3],
+        )
     
     def run(self) -> ArchiveResult:
         """Move validated files from staging to archive."""
@@ -60,10 +118,8 @@ class Archiver:
             if blob.name.endswith("/"):
                 continue
             
-            blob_path = f"gs://{staging_bucket.name}/{blob.name}"
-            
-            # Only archive files that were validated in THIS run
-            if blob_path not in self.validated_output_paths:
+            # Check if this blob was validated in THIS run using normalised comparison
+            if blob.name not in self._validated_blob_names:
                 log.debug(
                     "file_skipped_not_validated_this_run",
                     file=blob.name,

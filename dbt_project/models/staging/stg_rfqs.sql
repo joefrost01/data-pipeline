@@ -6,7 +6,12 @@
 
 /*
     Staging model for streaming RFQs.
-    Deduplicates at-least-once delivery using event_id + ingestion_time.
+    
+    Deduplicates at-least-once delivery using rfq_id + _ingestion_time.
+    
+    Source: Kafka → Pub/Sub → BigQuery streaming insert
+    Delivery: At-least-once (duplicates possible)
+    Deduplication: Keep first arrival per rfq_id
 */
 
 with deduplicated as (

@@ -1,4 +1,4 @@
-"""Surveillance Pipeline Orchestrator Package."""
+"""Markets Pipeline Orchestrator Package."""
 
 from orchestrator.orchestrator import __version__
 

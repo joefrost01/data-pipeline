@@ -33,8 +33,8 @@ make dbt-compile
 # Validate source specs
 make validate-specs
 
-# Smoke test a source
-make test-source SOURCE=murex_trades
+# Smoke test a source (requires GCP access)
+make test-source SOURCE=murex_trades PROJECT_ID=markets-int-12345
 ```
 
 ## Project Structure
@@ -45,7 +45,7 @@ markets-pipeline/
 │   ├── models/
 │   │   ├── staging/       # Clean, typed source data
 │   │   ├── curation/      # Enriched, joined data (trade_id created here)
-│   │   ├── consumer/      # Mart tables for consumption
+│   │   ├── consumer/      # Mart tables for consumption (markets_extract)
 │   │   ├── dimensions/    # Reference dimensions
 │   │   └── control/       # Pipeline control models
 │   ├── snapshots/         # SCD Type 2 dimensions
@@ -108,42 +108,10 @@ The pipeline uses GitHub Actions for CI:
 - Lint checks (ruff, mypy)
 - Python unit tests
 - dbt compile validation
-- Source spec validation
+- Source spec validation (including XPath syntax)
 - **Namespace protection** — CI fails if the trade ID namespace changes
 
-## Applying Fixes
-
-This directory contains updated files. To apply:
-
-```bash
-# From your repository root:
-cp -r data-pipeline-fixes/* .
-```
-
-Or selectively copy specific files.
-
-## Files Changed
-
-### Critical Fixes
-- `streaming/bridge.py` — Fixed import path
-- `orchestrator/__init__.py` — Added missing package init
-- `orchestrator/orchestrator/validator.py` — Fixed control file path handling
-- `orchestrator/orchestrator/extract.py` — Added temp table cleanup in finally block
-- `dbt_project/models/consumer/markets_extract.sql` — Renamed from surveillance_extract
-
-### Naming Consistency (surveillance → markets)
-- All Terraform files updated
-- K8s manifests updated
-- Makefile updated
-- Metric names updated in orchestrator
-
-### Improvements
-- `scripts/validate_specs.py` — Proper script replacing Makefile one-liner
-- `orchestrator/k8s/kustomization.yaml` — Added Kustomize support
-- `terraform/int/bigquery.tf` — Better clustering on control tables
-- `dbt_project/dbt_project.yml` — Added `force_full_refresh` variable
-
-## Testing After Applying
+## Testing After Changes
 
 ```bash
 # 1. Run linting
@@ -159,5 +127,22 @@ make dbt-compile
 make validate-specs
 
 # 5. Run the full CI locally (if you have GCP access)
-make integration-test
+make integration-test PROJECT_ID=markets-int-12345
 ```
+
+## Important Notes
+
+### Naming Convention
+
+This pipeline uses the `markets` prefix throughout (buckets, metrics, K8s resources). 
+The consumer model is `markets_extract` in the `consumer` schema.
+
+### Namespace UUID
+
+The `markets_namespace` in `dbt_project.yml` is **immutable**. Changing it will invalidate
+all existing trade IDs. This is protected by CI validation.
+
+### Extract Table
+
+The extract is generated from `consumer.markets_extract`. This can be overridden via
+the `EXTRACT_TABLE` environment variable if needed.

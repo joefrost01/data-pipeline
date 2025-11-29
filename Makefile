@@ -19,8 +19,12 @@ help:
 	@echo "  clean            Clean build artifacts"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make test-source SOURCE=murex_trades"
-	@echo "  make integration-test"
+	@echo "  make test-source SOURCE=murex_trades PROJECT_ID=markets-int-12345"
+	@echo "  make integration-test PROJECT_ID=markets-int-12345"
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  PROJECT_ID       GCP project ID (required for GCP operations)"
+	@echo "  SOURCE           Source name for test-source target"
 
 # Install dependencies
 install:
@@ -48,13 +52,18 @@ ifndef SOURCE
 endif
 	@python scripts/validate_specs.py --source $(SOURCE)
 
-# Smoke test a source end-to-end
-test-source:
-ifndef SOURCE
-	$(error SOURCE is required. Usage: make test-source SOURCE=murex_trades)
-endif
+# Check that PROJECT_ID is set for GCP operations
+.PHONY: _check_project_id
+_check_project_id:
 ifndef PROJECT_ID
-	$(eval PROJECT_ID := markets-int-12345)
+	$(error PROJECT_ID is required. Set it explicitly: make <target> PROJECT_ID=your-project-id)
+endif
+	@echo "Using PROJECT_ID: $(PROJECT_ID)"
+
+# Smoke test a source end-to-end
+test-source: _check_project_id
+ifndef SOURCE
+	$(error SOURCE is required. Usage: make test-source SOURCE=murex_trades PROJECT_ID=markets-int-12345)
 endif
 	@echo "Running smoke test for source: $(SOURCE)"
 	@echo "Project: $(PROJECT_ID)"
@@ -82,10 +91,7 @@ endif
 	@echo "✓ Smoke test complete"
 
 # Full integration test
-integration-test:
-ifndef PROJECT_ID
-	$(eval PROJECT_ID := markets-int-12345)
-endif
+integration-test: _check_project_id
 	@echo "Running full integration test against $(PROJECT_ID)"
 	@echo ""
 	pytest orchestrator/tests/integration/ -v --tb=short
@@ -116,10 +122,10 @@ clean:
 docker-build:
 	docker build -t markets-orchestrator:latest -f orchestrator/Dockerfile .
 
-# Deploy to int environment
-deploy-int:
+# Deploy to int environment (requires explicit PROJECT_ID)
+deploy-int: _check_project_id
 	@echo "Deploying to int environment..."
-	docker build -t gcr.io/markets-int-12345/markets-orchestrator:latest -f orchestrator/Dockerfile .
-	docker push gcr.io/markets-int-12345/markets-orchestrator:latest
+	docker build -t gcr.io/$(PROJECT_ID)/markets-orchestrator:latest -f orchestrator/Dockerfile .
+	docker push gcr.io/$(PROJECT_ID)/markets-orchestrator:latest
 	kubectl rollout restart cronjob/markets-pipeline -n markets
 	@echo "✓ Deployed"

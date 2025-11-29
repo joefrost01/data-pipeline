@@ -9,9 +9,9 @@ from pathlib import Path
 
 import structlog
 
-from orchestrator.config import Config
-from orchestrator.control import ControlTableWriter
-from orchestrator.metrics import MetricsClient
+from orchestrator.orchestrator.config import Config
+from orchestrator.orchestrator.control import ControlTableWriter
+from orchestrator.orchestrator.metrics import MetricsClient
 
 log = structlog.get_logger()
 

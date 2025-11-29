@@ -45,18 +45,18 @@ class Config:
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
         env = os.environ.get("ENV", "int")
-        project_id = os.environ.get("PROJECT_ID", f"surveillance-{env}-12345")
+        project_id = os.environ.get("PROJECT_ID", f"markets-{env}-12345")
         
         return cls(
             env=env,
             project_id=project_id,
             region=os.environ.get("REGION", "europe-west2"),
             
-            landing_bucket=os.environ.get("LANDING_BUCKET", f"surveillance-{env}-landing"),
-            staging_bucket=os.environ.get("STAGING_BUCKET", f"surveillance-{env}-staging"),
-            archive_bucket=os.environ.get("ARCHIVE_BUCKET", f"surveillance-{env}-archive"),
-            failed_bucket=os.environ.get("FAILED_BUCKET", f"surveillance-{env}-failed"),
-            extracts_bucket=os.environ.get("EXTRACTS_BUCKET", f"surveillance-{env}-extracts"),
+            landing_bucket=os.environ.get("LANDING_BUCKET", f"markets-{env}-landing"),
+            staging_bucket=os.environ.get("STAGING_BUCKET", f"markets-{env}-staging"),
+            archive_bucket=os.environ.get("ARCHIVE_BUCKET", f"markets-{env}-archive"),
+            failed_bucket=os.environ.get("FAILED_BUCKET", f"markets-{env}-failed"),
+            extracts_bucket=os.environ.get("EXTRACTS_BUCKET", f"markets-{env}-extracts"),
             
             bq_location=os.environ.get("BQ_LOCATION", "europe-west2"),
             control_dataset=os.environ.get("CONTROL_DATASET", "control"),

@@ -1,5 +1,6 @@
 """Generate surveillance extract for partner."""
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -10,6 +11,9 @@ from orchestrator.orchestrator.config import Config
 from orchestrator.orchestrator.metrics import MetricsClient
 
 log = structlog.get_logger()
+
+# Default extract table - can be overridden via environment variable
+DEFAULT_EXTRACT_TABLE = "consumer.markets_extract"
 
 
 @dataclass
@@ -28,6 +32,9 @@ class ExtractGenerator:
         self.metrics = metrics
         self.bq_client = bigquery.Client(location=config.bq_location)
         self.storage_client = storage.Client()
+        
+        # Allow override via environment variable
+        self.extract_table = os.environ.get("EXTRACT_TABLE", DEFAULT_EXTRACT_TABLE)
     
     def run(self) -> ExtractResult:
         """Generate extract and write to GCS."""
@@ -52,7 +59,7 @@ class ExtractGenerator:
         # Query for row count first (for logging)
         count_query = f"""
             SELECT COUNT(*) as cnt
-            FROM consumer.markets_extract
+            FROM {self.extract_table}
             WHERE trade_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {self.config.extract_window_days} DAY)
         """
         count_result = self.bq_client.query(count_query).result()
@@ -63,6 +70,7 @@ class ExtractGenerator:
             row_count=row_count,
             window_days=self.config.extract_window_days,
             output_path=output_path,
+            source_table=self.extract_table,
         )
         
         # Create temp table from query, then extract
@@ -71,7 +79,7 @@ class ExtractGenerator:
         
         extract_query = f"""
             SELECT *
-            FROM consumer.markets_extract
+            FROM {self.extract_table}
             WHERE trade_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {self.config.extract_window_days} DAY)
         """
         

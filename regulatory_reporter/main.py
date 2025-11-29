@@ -6,6 +6,7 @@ Features:
 - Cache-aside pattern for cache misses
 - Admin endpoint for manual cache refresh
 - Idempotent submissions
+- Retry with exponential backoff
 """
 
 import hashlib
@@ -40,8 +41,22 @@ class CacheConfig:
 
 
 @dataclass
+class RetryConfig:
+    """Configuration for submission retries."""
+    max_attempts: int = 5
+    initial_delay_seconds: float = 1.0
+    max_delay_seconds: float = 16.0
+    exponential_base: float = 2.0
+
+
+@dataclass
 class ReferenceCache:
-    """In-memory cache for reference data."""
+    """In-memory cache for reference data.
+    
+    IMPORTANT: Each lookup type (by ID vs by name) uses a SEPARATE cache dict.
+    This prevents key collisions when the same entity might be looked up
+    by different keys.
+    """
     traders: dict[str, dict] = field(default_factory=dict)
     counterparties_by_id: dict[str, dict] = field(default_factory=dict)
     counterparties_by_name: dict[str, dict] = field(default_factory=dict)
@@ -66,6 +81,12 @@ class RegulatoryReporter:
             ),
         )
         
+        self.retry_config = RetryConfig(
+            max_attempts=int(os.environ.get("RETRY_MAX_ATTEMPTS", "5")),
+            initial_delay_seconds=float(os.environ.get("RETRY_INITIAL_DELAY", "1.0")),
+            max_delay_seconds=float(os.environ.get("RETRY_MAX_DELAY", "16.0")),
+        )
+        
         self.cache = ReferenceCache()
         self.bq_client = bigquery.Client()
         self.http_client = httpx.Client(timeout=30.0)
@@ -84,6 +105,7 @@ class RegulatoryReporter:
         log.info(
             "reporter_initialised",
             refresh_interval=self.cache_config.refresh_interval_seconds,
+            max_retry_attempts=self.retry_config.max_attempts,
         )
     
     def refresh_cache(self, force: bool = False) -> dict[str, Any]:
@@ -115,6 +137,7 @@ class RegulatoryReporter:
                 traders[row.trader_id] = dict(row)
             
             # Refresh counterparties - use SEPARATE dicts for ID and name lookup
+            # This is critical to avoid key collisions
             counterparties_query = """
                 SELECT counterparty_id, counterparty_name, lei, country
                 FROM snapshots.counterparties_snapshot
@@ -125,8 +148,8 @@ class RegulatoryReporter:
             for row in self.bq_client.query(counterparties_query).result():
                 row_dict = dict(row)
                 counterparties_by_id[row.counterparty_id] = row_dict
-                # Only add to name lookup if name doesn't already exist
-                # (first one wins, prevents silent overwrites)
+                # Only add to name lookup if name exists and doesn't collide
+                # First one wins to prevent silent overwrites
                 if row.counterparty_name and row.counterparty_name not in counterparties_by_name:
                     counterparties_by_name[row.counterparty_name] = row_dict
             
@@ -161,6 +184,7 @@ class RegulatoryReporter:
             stats = {
                 "traders": len(traders),
                 "counterparties": len(counterparties_by_id),
+                "counterparties_by_name": len(counterparties_by_name),
                 "instruments": len(instruments),
                 "books": len(books),
             }
@@ -190,29 +214,25 @@ class RegulatoryReporter:
             if not self._shutdown.is_set():
                 self.refresh_cache()
     
-    def _lookup_with_fallback(
-        self, cache_dict: dict, key: str, table: str, key_column: str
-    ) -> dict | None:
-        """Look up reference data with cache-aside pattern.
-        
-        First checks cache, then falls back to BigQuery on miss.
-        """
+    def _lookup_trader_with_fallback(self, trader_id: str) -> dict | None:
+        """Look up trader with cache-aside pattern."""
         # Check cache first
-        if key in cache_dict:
-            return cache_dict[key]
+        if trader_id in self.cache.traders:
+            return self.cache.traders[trader_id]
         
         # Cache miss - query BigQuery directly
-        log.warning("cache_miss", table=table, key=key)
+        log.warning("cache_miss", table="traders", key=trader_id)
         
         try:
-            query = f"""
-                SELECT * FROM {table}
-                WHERE {key_column} = @key
+            query = """
+                SELECT trader_id, trader_name, desk_id, compliance_officer
+                FROM snapshots.traders_snapshot
+                WHERE trader_id = @key AND dbt_valid_to IS NULL
                 LIMIT 1
             """
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
-                    bigquery.ScalarQueryParameter("key", "STRING", key)
+                    bigquery.ScalarQueryParameter("key", "STRING", trader_id)
                 ]
             )
             
@@ -224,51 +244,229 @@ class RegulatoryReporter:
             
             if results:
                 data = dict(results[0])
-                # Update cache with the found value
-                cache_dict[key] = data
+                self.cache.traders[trader_id] = data
                 return data
             
             return None
             
         except Exception as e:
-            log.error("cache_fallback_failed", table=table, key=key, error=str(e))
+            log.error("cache_fallback_failed", table="traders", key=trader_id, error=str(e))
+            return None
+    
+    def _lookup_counterparty_by_id_with_fallback(self, counterparty_id: str) -> dict | None:
+        """Look up counterparty by ID with cache-aside pattern."""
+        if counterparty_id in self.cache.counterparties_by_id:
+            return self.cache.counterparties_by_id[counterparty_id]
+        
+        log.warning("cache_miss", table="counterparties", key=counterparty_id, lookup_type="id")
+        
+        try:
+            query = """
+                SELECT counterparty_id, counterparty_name, lei, country
+                FROM snapshots.counterparties_snapshot
+                WHERE counterparty_id = @key AND dbt_valid_to IS NULL
+                LIMIT 1
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("key", "STRING", counterparty_id)
+                ]
+            )
+            
+            results = list(self.bq_client.query(
+                query,
+                job_config=job_config,
+                timeout=self.cache_config.cache_miss_timeout_seconds,
+            ).result())
+            
+            if results:
+                data = dict(results[0])
+                # Update ONLY the by-ID cache
+                self.cache.counterparties_by_id[counterparty_id] = data
+                return data
+            
+            return None
+            
+        except Exception as e:
+            log.error("cache_fallback_failed", table="counterparties", key=counterparty_id, error=str(e))
+            return None
+    
+    def _lookup_counterparty_by_name_with_fallback(self, counterparty_name: str) -> dict | None:
+        """Look up counterparty by name with cache-aside pattern."""
+        if counterparty_name in self.cache.counterparties_by_name:
+            return self.cache.counterparties_by_name[counterparty_name]
+        
+        log.warning("cache_miss", table="counterparties", key=counterparty_name, lookup_type="name")
+        
+        try:
+            query = """
+                SELECT counterparty_id, counterparty_name, lei, country
+                FROM snapshots.counterparties_snapshot
+                WHERE counterparty_name = @key AND dbt_valid_to IS NULL
+                LIMIT 1
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("key", "STRING", counterparty_name)
+                ]
+            )
+            
+            results = list(self.bq_client.query(
+                query,
+                job_config=job_config,
+                timeout=self.cache_config.cache_miss_timeout_seconds,
+            ).result())
+            
+            if results:
+                data = dict(results[0])
+                # Update ONLY the by-name cache
+                self.cache.counterparties_by_name[counterparty_name] = data
+                return data
+            
+            return None
+            
+        except Exception as e:
+            log.error("cache_fallback_failed", table="counterparties", key=counterparty_name, error=str(e))
+            return None
+    
+    def _lookup_instrument_with_fallback(self, instrument_id: str) -> dict | None:
+        """Look up instrument with cache-aside pattern."""
+        if instrument_id in self.cache.instruments:
+            return self.cache.instruments[instrument_id]
+        
+        log.warning("cache_miss", table="instruments", key=instrument_id)
+        
+        try:
+            query = """
+                SELECT instrument_id, symbol, isin, asset_class, currency
+                FROM curation.dim_instrument
+                WHERE instrument_id = @key
+                LIMIT 1
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("key", "STRING", instrument_id)
+                ]
+            )
+            
+            results = list(self.bq_client.query(
+                query,
+                job_config=job_config,
+                timeout=self.cache_config.cache_miss_timeout_seconds,
+            ).result())
+            
+            if results:
+                data = dict(results[0])
+                self.cache.instruments[instrument_id] = data
+                return data
+            
+            return None
+            
+        except Exception as e:
+            log.error("cache_fallback_failed", table="instruments", key=instrument_id, error=str(e))
             return None
     
     def get_trader(self, trader_id: str) -> dict | None:
         """Get trader reference data with cache-aside fallback."""
-        return self._lookup_with_fallback(
-            self.cache.traders,
-            trader_id,
-            "snapshots.traders_snapshot",
-            "trader_id",
-        )
+        return self._lookup_trader_with_fallback(trader_id)
     
     def get_counterparty(self, counterparty_id: str) -> dict | None:
         """Get counterparty reference data by ID with cache-aside fallback."""
-        return self._lookup_with_fallback(
-            self.cache.counterparties_by_id,
-            counterparty_id,
-            "snapshots.counterparties_snapshot",
-            "counterparty_id",
-        )
+        return self._lookup_counterparty_by_id_with_fallback(counterparty_id)
     
     def get_counterparty_by_name(self, counterparty_name: str) -> dict | None:
         """Get counterparty reference data by name with cache-aside fallback."""
-        return self._lookup_with_fallback(
-            self.cache.counterparties_by_name,
-            counterparty_name,
-            "snapshots.counterparties_snapshot",
-            "counterparty_name",
-        )
+        return self._lookup_counterparty_by_name_with_fallback(counterparty_name)
     
     def get_instrument(self, instrument_id: str) -> dict | None:
         """Get instrument reference data with cache-aside fallback."""
-        return self._lookup_with_fallback(
-            self.cache.instruments,
-            instrument_id,
-            "curation.dim_instrument",
-            "instrument_id",
-        )
+        return self._lookup_instrument_with_fallback(instrument_id)
+    
+    def _submit_with_retry(
+        self, 
+        event_id: str, 
+        enriched: dict
+    ) -> tuple[bool, dict[str, Any]]:
+        """Submit to regulator with exponential backoff retry.
+        
+        Args:
+            event_id: Deterministic event ID for idempotency
+            enriched: Enriched event payload
+            
+        Returns:
+            Tuple of (success, result_dict)
+        """
+        delay = self.retry_config.initial_delay_seconds
+        last_error = None
+        
+        for attempt in range(1, self.retry_config.max_attempts + 1):
+            try:
+                response = self.http_client.post(
+                    self.regulator_api_url,
+                    json=enriched,
+                    headers={
+                        "Authorization": f"Bearer {self.regulator_api_key}",
+                        "Content-Type": "application/json",
+                        "X-Idempotency-Key": event_id,
+                    },
+                )
+                
+                # Success
+                if response.status_code in (200, 201, 202):
+                    result = response.json()
+                    return True, {
+                        "regulator_reference": result.get("reference", result.get("id")),
+                        "response": result,
+                    }
+                
+                # Non-retryable client errors
+                if 400 <= response.status_code < 500 and response.status_code != 429:
+                    return False, {
+                        "error": f"HTTP {response.status_code}: {response.text[:200]}",
+                        "retryable": False,
+                    }
+                
+                # Retryable errors (5xx, 429)
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                log.warning(
+                    "submission_retry",
+                    event_id=event_id,
+                    attempt=attempt,
+                    status_code=response.status_code,
+                    delay=delay,
+                )
+                
+            except httpx.TimeoutException as e:
+                last_error = f"Timeout: {str(e)}"
+                log.warning(
+                    "submission_timeout_retry",
+                    event_id=event_id,
+                    attempt=attempt,
+                    delay=delay,
+                )
+            except httpx.RequestError as e:
+                last_error = f"Request error: {str(e)}"
+                log.warning(
+                    "submission_request_error_retry",
+                    event_id=event_id,
+                    attempt=attempt,
+                    error=str(e),
+                    delay=delay,
+                )
+            
+            # Don't sleep after last attempt
+            if attempt < self.retry_config.max_attempts:
+                time.sleep(delay)
+                delay = min(
+                    delay * self.retry_config.exponential_base,
+                    self.retry_config.max_delay_seconds,
+                )
+        
+        return False, {
+            "error": f"Max retries exceeded. Last error: {last_error}",
+            "retryable": True,
+            "attempts": self.retry_config.max_attempts,
+        }
     
     def submit_event(self, event: dict) -> dict[str, Any]:
         """Submit a regulatory event.
@@ -303,28 +501,17 @@ class RegulatoryReporter:
                 "message": "Failed to enrich event - missing reference data",
             }
         
-        # Submit to regulator
+        # Submit to regulator with retry
         submission_start = time.monotonic()
+        success, result = self._submit_with_retry(event_id, enriched)
+        submission_latency = time.monotonic() - submission_start
         
-        try:
-            response = self.http_client.post(
-                self.regulator_api_url,
-                json=enriched,
-                headers={
-                    "Authorization": f"Bearer {self.regulator_api_key}",
-                    "Content-Type": "application/json",
-                    "X-Idempotency-Key": event_id,
-                },
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            regulator_reference = result.get("reference", result.get("id"))
-            
-            submission_latency = time.monotonic() - submission_start
-            total_latency = (
-                datetime.now(timezone.utc) - event_timestamp
-            ).total_seconds()
+        total_latency = (
+            datetime.now(timezone.utc) - event_timestamp
+        ).total_seconds()
+        
+        if success:
+            regulator_reference = result.get("regulator_reference")
             
             # Log to audit table
             self._log_submission(
@@ -335,6 +522,7 @@ class RegulatoryReporter:
                 total_latency=total_latency,
                 status="SUBMITTED",
                 payload_hash=self._hash_payload(enriched),
+                retry_count=0,
             )
             
             log.info(
@@ -350,25 +538,26 @@ class RegulatoryReporter:
                 "regulator_reference": regulator_reference,
                 "latency_seconds": total_latency,
             }
-            
-        except httpx.HTTPStatusError as e:
-            log.error(
-                "submission_http_error",
+        else:
+            # Log failure to dead letter
+            self._log_dead_letter(
                 event_id=event_id,
-                status_code=e.response.status_code,
-                body=e.response.text[:500],
+                event_timestamp=event_timestamp,
+                failure_reason=result.get("error", "Unknown error"),
+                retry_count=result.get("attempts", self.retry_config.max_attempts),
+                event_payload=event,
             )
+            
+            log.error(
+                "submission_failed",
+                event_id=event_id,
+                error=result.get("error"),
+            )
+            
             return {
                 "status": "error",
                 "event_id": event_id,
-                "message": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
-            }
-        except Exception as e:
-            log.exception("submission_failed", event_id=event_id)
-            return {
-                "status": "error",
-                "event_id": event_id,
-                "message": str(e),
+                "message": result.get("error"),
             }
     
     def _generate_event_id(self, event: dict) -> str:
@@ -455,6 +644,7 @@ class RegulatoryReporter:
         total_latency: float,
         status: str,
         payload_hash: str,
+        retry_count: int = 0,
     ) -> None:
         """Log submission to audit table."""
         row = {
@@ -465,9 +655,9 @@ class RegulatoryReporter:
             "regulator_reference": regulator_reference,
             "submission_latency_seconds": submission_latency,
             "status": status,
-            "report_type": "TRADE",  # Could be parameterised
+            "report_type": "TRADE",
             "report_payload_hash": payload_hash,
-            "retry_count": 0,
+            "retry_count": retry_count,
         }
         
         errors = self.bq_client.insert_rows_json(
@@ -476,6 +666,33 @@ class RegulatoryReporter:
         
         if errors:
             log.error("audit_log_failed", errors=errors)
+    
+    def _log_dead_letter(
+        self,
+        event_id: str,
+        event_timestamp: datetime,
+        failure_reason: str,
+        retry_count: int,
+        event_payload: dict,
+    ) -> None:
+        """Log failed submission to dead letter table."""
+        row = {
+            "dead_letter_id": str(uuid.uuid4()),
+            "event_id": event_id,
+            "event_timestamp": event_timestamp.isoformat(),
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "failure_reason": failure_reason,
+            "retry_count": retry_count,
+            "last_error": failure_reason,
+            "event_payload": json.dumps(event_payload, default=str),
+        }
+        
+        errors = self.bq_client.insert_rows_json(
+            "control.regulatory_dead_letter", [row]
+        )
+        
+        if errors:
+            log.error("dead_letter_log_failed", errors=errors)
     
     def get_cache_status(self) -> dict[str, Any]:
         """Get cache status for health checks."""
@@ -495,7 +712,8 @@ class RegulatoryReporter:
                 "refresh_in_progress": self.cache.refresh_in_progress,
                 "counts": {
                     "traders": len(self.cache.traders),
-                    "counterparties": len(self.cache.counterparties_by_id),
+                    "counterparties_by_id": len(self.cache.counterparties_by_id),
+                    "counterparties_by_name": len(self.cache.counterparties_by_name),
                     "instruments": len(self.cache.instruments),
                     "books": len(self.cache.books),
                 },
@@ -571,6 +789,13 @@ def cache_status():
     return jsonify(r.get_cache_status()), 200
 
 
+def create_app():
+    """Create Flask app for production WSGI server (e.g., gunicorn)."""
+    # Ensure reporter is initialised
+    get_reporter()
+    return app
+
+
 if __name__ == "__main__":
     structlog.configure(
         processors=[
@@ -580,5 +805,8 @@ if __name__ == "__main__":
         ],
     )
     
+    # NOTE: This is for development only.
+    # In production, use gunicorn:
+    #   gunicorn -w 4 -b 0.0.0.0:8080 "regulatory_reporter.main:create_app()"
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)

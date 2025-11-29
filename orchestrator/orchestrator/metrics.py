@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 
-from orchestrator.config import Config
+from orchestrator.orchestrator.config import Config
 
 log = structlog.get_logger()
 

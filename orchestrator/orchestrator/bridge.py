@@ -5,6 +5,7 @@ Consumes messages from Kafka and publishes to Pub/Sub with:
 - Backpressure via Kafka consumer pause/resume
 - Graceful shutdown handling
 - Metrics for monitoring
+- Consistent error handling
 """
 
 import json
@@ -24,6 +25,21 @@ from google.cloud import pubsub_v1
 from google.api_core.exceptions import GoogleAPICallError
 
 log = structlog.get_logger()
+
+
+class BridgeError(Exception):
+    """Base exception for bridge errors."""
+    pass
+
+
+class KafkaConnectionError(BridgeError):
+    """Kafka connection failed."""
+    pass
+
+
+class PubSubPublishError(BridgeError):
+    """Pub/Sub publish failed."""
+    pass
 
 
 @dataclass
@@ -77,6 +93,8 @@ class BridgeMetrics:
     publish_errors: int = 0
     buffer_high_water: int = 0
     paused_count: int = 0
+    decode_errors: int = 0
+    kafka_errors: int = 0
     last_message_at: datetime | None = None
     last_publish_at: datetime | None = None
 
@@ -89,6 +107,8 @@ class StreamingBridge:
         self.metrics = BridgeMetrics()
         self._shutdown = threading.Event()
         self._paused = False
+        self._kafka_connected = False
+        self._pubsub_connected = False
 
         # Bounded buffer for backpressure
         self._buffer: deque[BufferedMessage] = deque(maxlen=config.buffer_max_size)
@@ -103,27 +123,37 @@ class StreamingBridge:
         self._offset_lock = threading.Lock()
 
         # Kafka consumer
-        self._consumer = Consumer({
-            "bootstrap.servers": config.kafka_brokers,
-            "group.id": config.kafka_group_id,
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": False,  # Manual commit after Pub/Sub ack
-            "max.poll.interval.ms": 300000,
-        })
+        try:
+            self._consumer = Consumer({
+                "bootstrap.servers": config.kafka_brokers,
+                "group.id": config.kafka_group_id,
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": False,  # Manual commit after Pub/Sub ack
+                "max.poll.interval.ms": 300000,
+            })
+            self._kafka_connected = True
+        except KafkaException as e:
+            log.error("kafka_connection_failed", error=str(e))
+            raise KafkaConnectionError(f"Failed to connect to Kafka: {e}") from e
 
         # Pub/Sub publisher with batching
-        self._publisher = pubsub_v1.PublisherClient(
-            publisher_options=pubsub_v1.types.PublisherOptions(
-                enable_message_ordering=False,
-            ),
-            batch_settings=pubsub_v1.types.BatchSettings(
-                max_messages=config.publish_batch_size,
-                max_latency=0.1,  # 100ms max latency
-            ),
-        )
-        self._topic_path = self._publisher.topic_path(
-            config.pubsub_project, config.pubsub_topic
-        )
+        try:
+            self._publisher = pubsub_v1.PublisherClient(
+                publisher_options=pubsub_v1.types.PublisherOptions(
+                    enable_message_ordering=False,
+                ),
+                batch_settings=pubsub_v1.types.BatchSettings(
+                    max_messages=config.publish_batch_size,
+                    max_latency=0.1,  # 100ms max latency
+                ),
+            )
+            self._topic_path = self._publisher.topic_path(
+                config.pubsub_project, config.pubsub_topic
+            )
+            self._pubsub_connected = True
+        except Exception as e:
+            log.error("pubsub_connection_failed", error=str(e))
+            raise PubSubPublishError(f"Failed to connect to Pub/Sub: {e}") from e
 
         log.info(
             "bridge_initialised",
@@ -152,6 +182,9 @@ class StreamingBridge:
                 self._commit_offsets()
         except KeyboardInterrupt:
             log.info("bridge_interrupted")
+        except Exception as e:
+            log.exception("bridge_run_error", error=str(e))
+            raise
         finally:
             self._graceful_shutdown()
 
@@ -162,7 +195,12 @@ class StreamingBridge:
             time.sleep(0.1)
             return
 
-        msg = self._consumer.poll(timeout=1.0)
+        try:
+            msg = self._consumer.poll(timeout=1.0)
+        except KafkaException as e:
+            self.metrics.kafka_errors += 1
+            log.error("kafka_poll_error", error=str(e))
+            return
 
         if msg is None:
             return
@@ -170,15 +208,32 @@ class StreamingBridge:
         if msg.error():
             if msg.error().code() == KafkaError._PARTITION_EOF:
                 return
-            log.error("kafka_error", error=msg.error())
+            self.metrics.kafka_errors += 1
+            log.error("kafka_message_error", error=str(msg.error()))
             return
 
         # Transform message for Pub/Sub
         try:
             kafka_value = json.loads(msg.value().decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            log.error("message_decode_error", error=str(e), offset=msg.offset())
+        except json.JSONDecodeError as e:
+            self.metrics.decode_errors += 1
             self.metrics.messages_failed += 1
+            log.error(
+                "message_json_decode_error",
+                error=str(e),
+                partition=msg.partition(),
+                offset=msg.offset(),
+            )
+            return
+        except UnicodeDecodeError as e:
+            self.metrics.decode_errors += 1
+            self.metrics.messages_failed += 1
+            log.error(
+                "message_unicode_decode_error",
+                error=str(e),
+                partition=msg.partition(),
+                offset=msg.offset(),
+            )
             return
 
         # Add Kafka metadata
@@ -238,14 +293,26 @@ class StreamingBridge:
             )
 
         except GoogleAPICallError as e:
+            self.metrics.publish_errors += 1
             log.error(
-                "pubsub_publish_error",
+                "pubsub_publish_api_error",
                 error=str(e),
                 partition=message.kafka_partition,
                 offset=message.kafka_offset,
             )
-            self.metrics.publish_errors += 1
+            # Re-queue the message for retry
+            with self._buffer_lock:
+                self._buffer.appendleft(message)
 
+        except Exception as e:
+            self.metrics.publish_errors += 1
+            log.error(
+                "pubsub_publish_unexpected_error",
+                error=str(e),
+                error_type=type(e).__name__,
+                partition=message.kafka_partition,
+                offset=message.kafka_offset,
+            )
             # Re-queue the message for retry
             with self._buffer_lock:
                 self._buffer.appendleft(message)
@@ -271,11 +338,30 @@ class StreamingBridge:
             self.metrics.last_publish_at = datetime.now(timezone.utc)
 
         except FuturesTimeoutError:
-            log.warning("pubsub_publish_timeout", future_id=future_id)
             self.metrics.publish_errors += 1
-        except Exception as e:
-            log.error("pubsub_publish_failed", error=str(e), future_id=future_id)
+            log.warning(
+                "pubsub_publish_timeout",
+                future_id=future_id,
+                partition=message.kafka_partition,
+                offset=message.kafka_offset,
+            )
+        except GoogleAPICallError as e:
+            self.metrics.publish_errors += 1
             self.metrics.messages_failed += 1
+            log.error(
+                "pubsub_publish_callback_api_error",
+                error=str(e),
+                future_id=future_id,
+            )
+        except Exception as e:
+            self.metrics.publish_errors += 1
+            self.metrics.messages_failed += 1
+            log.error(
+                "pubsub_publish_callback_error",
+                error=str(e),
+                error_type=type(e).__name__,
+                future_id=future_id,
+            )
 
     def _check_backpressure(self) -> None:
         """Pause/resume Kafka consumer based on buffer size."""
@@ -284,24 +370,30 @@ class StreamingBridge:
 
         if not self._paused and buffer_size >= self.config.buffer_max_size:
             # Pause consumption
-            partitions = self._consumer.assignment()
-            if partitions:
-                self._consumer.pause(partitions)
-                self._paused = True
-                self.metrics.paused_count += 1
-                log.warning(
-                    "kafka_paused",
-                    buffer_size=buffer_size,
-                    reason="backpressure",
-                )
+            try:
+                partitions = self._consumer.assignment()
+                if partitions:
+                    self._consumer.pause(partitions)
+                    self._paused = True
+                    self.metrics.paused_count += 1
+                    log.warning(
+                        "kafka_paused",
+                        buffer_size=buffer_size,
+                        reason="backpressure",
+                    )
+            except KafkaException as e:
+                log.error("kafka_pause_error", error=str(e))
 
         elif self._paused and buffer_size <= self.config.buffer_resume_size:
             # Resume consumption
-            partitions = self._consumer.assignment()
-            if partitions:
-                self._consumer.resume(partitions)
-                self._paused = False
-                log.info("kafka_resumed", buffer_size=buffer_size)
+            try:
+                partitions = self._consumer.assignment()
+                if partitions:
+                    self._consumer.resume(partitions)
+                    self._paused = False
+                    log.info("kafka_resumed", buffer_size=buffer_size)
+            except KafkaException as e:
+                log.error("kafka_resume_error", error=str(e))
 
     def _commit_offsets(self) -> None:
         """Commit Kafka offsets for successfully published messages."""
@@ -322,6 +414,7 @@ class StreamingBridge:
             try:
                 self._consumer.commit(offsets=offsets_to_commit, asynchronous=False)
             except KafkaException as e:
+                self.metrics.kafka_errors += 1
                 log.error("kafka_commit_error", error=str(e))
 
     def _handle_shutdown(self, signum: int, frame: Any) -> None:
@@ -353,7 +446,10 @@ class StreamingBridge:
         self._commit_offsets()
 
         # Close connections
-        self._consumer.close()
+        try:
+            self._consumer.close()
+        except Exception as e:
+            log.warning("kafka_close_error", error=str(e))
 
         log.info(
             "bridge_shutdown_complete",
@@ -378,15 +474,17 @@ class StreamingBridge:
             ).total_seconds()
 
         healthy = (
-                not self._paused
+                self._kafka_connected
+                and self._pubsub_connected
+                and not self._paused
                 and (lag_seconds is None or lag_seconds < self.config.max_lag_seconds)
                 and buffer_size < self.config.buffer_max_size * 0.9
         )
 
         return {
             "status": "healthy" if healthy else "degraded",
-            "kafka_connected": True,  # Would be false if consumer errored
-            "pubsub_connected": True,
+            "kafka_connected": self._kafka_connected,
+            "pubsub_connected": self._pubsub_connected,
             "paused": self._paused,
             "buffer_size": buffer_size,
             "buffer_max": self.config.buffer_max_size,
@@ -397,6 +495,8 @@ class StreamingBridge:
                 "messages_published": self.metrics.messages_published,
                 "messages_failed": self.metrics.messages_failed,
                 "publish_errors": self.metrics.publish_errors,
+                "decode_errors": self.metrics.decode_errors,
+                "kafka_errors": self.metrics.kafka_errors,
                 "buffer_high_water": self.metrics.buffer_high_water,
                 "paused_count": self.metrics.paused_count,
             },
@@ -405,7 +505,6 @@ class StreamingBridge:
 
 def main() -> None:
     """Entry point for the streaming bridge."""
-    import structlog
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,

@@ -2,7 +2,8 @@
 """Validate source specification YAML files.
 
 This script validates all source specs in the source_specs directory,
-checking for required fields, valid types, and consistent configuration.
+checking for required fields, valid types, consistent configuration,
+and XPath syntax for XML sources.
 
 Usage:
     python scripts/validate_specs.py              # Validate all specs
@@ -32,6 +33,34 @@ REQUIRED_SOURCE_FIELDS = {"path_pattern", "format"}
 VALID_FORMATS = {"csv", "json", "jsonl", "xml", "parquet"}
 
 
+def validate_xpath(xpath: str, namespaces: dict) -> tuple[bool, str | None]:
+    """Validate XPath expression syntax.
+    
+    Args:
+        xpath: XPath expression to validate
+        namespaces: Namespace prefix to URI mapping
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    try:
+        from lxml import etree
+        
+        # Compile the XPath to check syntax
+        etree.XPath(xpath, namespaces=namespaces)
+        return True, None
+        
+    except etree.XPathSyntaxError as e:
+        return False, f"Invalid XPath syntax: {e}"
+    except etree.XPathEvalError as e:
+        return False, f"XPath evaluation error: {e}"
+    except ImportError:
+        # lxml not installed - skip XPath validation with a warning
+        return True, None
+    except Exception as e:
+        return False, f"XPath validation error: {e}"
+
+
 def validate_spec(spec_path: Path) -> list[str]:
     """Validate a single source specification file.
     
@@ -42,6 +71,7 @@ def validate_spec(spec_path: Path) -> list[str]:
         List of error messages (empty if valid)
     """
     errors = []
+    warnings = []
     
     try:
         with open(spec_path) as f:
@@ -77,6 +107,10 @@ def validate_spec(spec_path: Path) -> list[str]:
     if not schema:
         errors.append("Schema is empty")
     
+    # Get namespaces for XPath validation
+    xml_config = spec.get("xml_config", {})
+    namespaces = xml_config.get("namespaces", {})
+    
     field_names = set()
     for i, field in enumerate(schema):
         field_name = field.get("name")
@@ -103,16 +137,21 @@ def validate_spec(spec_path: Path) -> list[str]:
             allowed = field["allowed_values"]
             if not isinstance(allowed, list):
                 errors.append(f"Field '{field_name}' allowed_values must be a list")
+        
+        # Validate XPath for XML sources
+        if format_type == "xml":
+            xpath = field.get("xpath")
+            if not xpath:
+                errors.append(f"XML field '{field_name}' missing 'xpath'")
+            else:
+                is_valid, xpath_error = validate_xpath(xpath, namespaces)
+                if not is_valid:
+                    errors.append(f"Field '{field_name}' has invalid xpath '{xpath}': {xpath_error}")
     
     # Validate XML-specific config
     if format_type == "xml":
         if "row_element" not in source:
             errors.append("XML format requires 'row_element' in source config")
-        
-        # Check that schema fields have xpath for XML
-        for field in schema:
-            if "xpath" not in field:
-                errors.append(f"XML field '{field.get('name')}' missing 'xpath'")
     
     # Validate control file config if present
     control_file = spec.get("control_file", {})
@@ -121,6 +160,18 @@ def validate_spec(spec_path: Path) -> list[str]:
         valid_control_types = {"sidecar_xml", "sidecar_csv", "trailer"}
         if control_type and control_type not in valid_control_types:
             errors.append(f"Invalid control_file type '{control_type}'. Valid: {valid_control_types}")
+        
+        # Validate control file has required fields based on type
+        if control_type == "sidecar_xml":
+            if "xpath_row_count" not in control_file and "pattern" not in control_file:
+                warnings.append("sidecar_xml control file should have 'xpath_row_count' or 'pattern'")
+        elif control_type == "sidecar_csv":
+            if "row_count_field" not in control_file:
+                warnings.append("sidecar_csv control file should have 'row_count_field'")
+    
+    # Print warnings but don't fail
+    for warning in warnings:
+        print(f"   ⚠ {warning}")
     
     return errors
 
@@ -135,6 +186,11 @@ def main():
         "--specs-dir",
         default="source_specs",
         help="Directory containing source specs (default: source_specs)"
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as errors"
     )
     args = parser.parse_args()
     
@@ -158,6 +214,14 @@ def main():
         sys.exit(1)
     
     print(f"Validating {len(spec_files)} source spec(s)...\n")
+    
+    # Check if lxml is available for XPath validation
+    try:
+        import lxml
+        print("✓ lxml available - XPath validation enabled\n")
+    except ImportError:
+        print("⚠ lxml not installed - XPath syntax validation skipped")
+        print("  Install with: pip install lxml\n")
     
     all_valid = True
     for spec_path in sorted(spec_files):

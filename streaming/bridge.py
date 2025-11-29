@@ -11,16 +11,22 @@ For direct execution, use:
 # so imports need the full path
 from orchestrator.orchestrator.bridge import (
     BridgeConfig,
+    BridgeError,
     BridgeMetrics,
     BufferedMessage,
+    KafkaConnectionError,
+    PubSubPublishError,
     StreamingBridge,
     main,
 )
 
 __all__ = [
     "BridgeConfig",
+    "BridgeError",
     "BridgeMetrics",
     "BufferedMessage",
+    "KafkaConnectionError",
+    "PubSubPublishError",
     "StreamingBridge",
     "main",
 ]

@@ -1,0 +1,14 @@
+# Regulatory Reporter Dependencies
+
+# Web framework
+flask>=3.0.0
+gunicorn>=21.0.0
+
+# GCP clients
+google-cloud-bigquery>=3.17.0
+
+# HTTP client with retry support
+httpx>=0.26.0
+
+# Structured logging
+structlog>=24.1.0

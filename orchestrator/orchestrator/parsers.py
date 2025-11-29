@@ -7,7 +7,7 @@ from typing import Any
 
 import structlog
 
-from orchestrator.rules import RuleEvaluator
+from orchestrator.orchestrator.rules import RuleEvaluator
 
 log = structlog.get_logger()
 
@@ -254,7 +254,15 @@ class JsonParser(Parser):
 
 
 class XmlParser(Parser):
-    """Parser for XML files."""
+    """Parser for XML files.
+    
+    IMPORTANT: Namespace handling behaviour:
+    - When row_element is namespaced (e.g., 'ns:Trade'), only elements in that 
+      exact namespace will be matched.
+    - When row_element is not namespaced, elements are matched by local name only,
+      which could match elements in ANY namespace with that local name.
+    - For strict namespace enforcement, always use namespaced element names.
+    """
     
     def parse_and_validate(
         self, file_path: str, spec: dict
@@ -269,17 +277,16 @@ class XmlParser(Parser):
         row_element = spec["source"]["row_element"]
         schema = {field["name"]: field for field in spec["schema"]}
         
-        # Build the tag matcher - handle namespaced elements
-        tag_matcher = self._build_tag_matcher(row_element, namespaces)
+        # Determine if we're doing strict namespace matching
+        strict_namespace = ":" in row_element and row_element.split(":")[0] in namespaces
         
         # Parse XML with iterparse for memory efficiency
-        # Use tag=None to match all elements, then filter
         context = etree.iterparse(file_path, events=("end",))
         
         row_num = 0
         for event, elem in context:
             # Check if this element matches our row element
-            if not self._element_matches(elem, row_element, namespaces):
+            if not self._element_matches(elem, row_element, namespaces, strict_namespace):
                 continue
             
             row_num += 1
@@ -334,19 +341,38 @@ class XmlParser(Parser):
                 return f"{{{namespaces[prefix]}}}{local}"
         return row_element
     
-    def _element_matches(self, elem: Any, row_element: str, namespaces: dict) -> bool:
+    def _element_matches(
+        self, 
+        elem: Any, 
+        row_element: str, 
+        namespaces: dict,
+        strict_namespace: bool = True
+    ) -> bool:
         """Check if an element matches the expected row element.
         
-        Handles both namespaced (ns:Element) and non-namespaced elements.
+        Args:
+            elem: The lxml element to check
+            row_element: The expected element name (e.g., 'ns:Trade' or 'Trade')
+            namespaces: Namespace prefix to URI mapping
+            strict_namespace: If True, require exact namespace match. If False,
+                            fall back to local name matching for non-namespaced specs.
+        
+        Returns:
+            True if element matches, False otherwise.
         """
         # Build the expected tag in Clark notation
         expected_tag = self._build_tag_matcher(row_element, namespaces)
         
-        # Compare with the element's tag (which is always in Clark notation)
+        # Exact match (including namespace)
         if elem.tag == expected_tag:
             return True
         
-        # Also check local name only (for non-namespaced elements)
+        # If strict namespace mode and we didn't get an exact match, fail
+        if strict_namespace:
+            return False
+        
+        # Fallback: local name match only (for non-namespaced element specs)
+        # WARNING: This could match unintended elements in multi-namespace documents
         local_name = row_element.split(":")[-1] if ":" in row_element else row_element
         elem_local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
         
