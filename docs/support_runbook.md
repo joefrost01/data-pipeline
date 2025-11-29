@@ -318,19 +318,6 @@ ORDER BY date DESC
 
 ---
 
-## Contacts
-
-| Role | Contact |
-|------|---------|
-| Pipeline Engineering | data-engineering@company.com |
-| Murex Support | trading-systems@company.com |
-| Venue Integration | venue-integration@company.com |
-| Reference Data | reference-data@company.com |
-| Regulatory Reporting | regulatory-reporting@company.com |
-| On-call Engineer | PagerDuty rotation |
-
----
-
 ## Reference
 
 - [design.md](design.md) — Architecture and failure modes
