@@ -16,8 +16,14 @@ clean-targets:
   - "dbt_packages"
 
 vars:
-  # Deterministic UUID namespace for trade_id generation
+  # Deterministic MD5 namespace for trade_id generation
+  # WARNING: Changing this will invalidate ALL existing trade_ids
+  # Protected by CI validation - see .github/workflows/ci.yml
   markets_namespace: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+  
+  # Set to true to force full refresh of incremental models
+  # Usage: dbt run --select trades_enriched --vars '{"force_full_refresh": true}'
+  force_full_refresh: false
 
 models:
   markets_pipeline:

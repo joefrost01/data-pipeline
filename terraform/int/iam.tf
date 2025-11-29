@@ -4,31 +4,31 @@
 
 resource "google_service_account" "validator" {
   account_id   = "${local.name_prefix}-validator"
-  display_name = "Surveillance Pipeline Validator"
+  display_name = "Markets Pipeline Validator"
   description  = "Service account for file validation and ingestion"
 }
 
 resource "google_service_account" "dbt" {
   account_id   = "${local.name_prefix}-dbt"
-  display_name = "Surveillance Pipeline dbt"
+  display_name = "Markets Pipeline dbt"
   description  = "Service account for dbt transformations"
 }
 
 resource "google_service_account" "streaming_bridge" {
   account_id   = "${local.name_prefix}-streaming"
-  display_name = "Surveillance Pipeline Streaming Bridge"
+  display_name = "Markets Pipeline Streaming Bridge"
   description  = "Service account for Kafka to Pub/Sub bridge"
 }
 
 resource "google_service_account" "regulatory_reporter" {
   account_id   = "${local.name_prefix}-regulatory"
-  display_name = "Surveillance Pipeline Regulatory Reporter"
+  display_name = "Markets Pipeline Regulatory Reporter"
   description  = "Service account for low-latency regulatory reporting"
 }
 
 resource "google_service_account" "orchestrator" {
   account_id   = "${local.name_prefix}-orchestrator"
-  display_name = "Surveillance Pipeline Orchestrator"
+  display_name = "Markets Pipeline Orchestrator"
   description  = "Service account for pipeline orchestration"
 }
 
@@ -224,23 +224,23 @@ resource "google_secret_manager_secret_iam_member" "regulator_api_key" {
 resource "google_service_account_iam_member" "validator_workload_identity" {
   service_account_id = google_service_account.validator.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[surveillance/validator]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[markets/validator]"
 }
 
 resource "google_service_account_iam_member" "dbt_workload_identity" {
   service_account_id = google_service_account.dbt.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[surveillance/dbt]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[markets/dbt]"
 }
 
 resource "google_service_account_iam_member" "streaming_bridge_workload_identity" {
   service_account_id = google_service_account.streaming_bridge.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[surveillance/streaming-bridge]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[markets/streaming-bridge]"
 }
 
 resource "google_service_account_iam_member" "orchestrator_workload_identity" {
   service_account_id = google_service_account.orchestrator.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[surveillance/orchestrator]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[markets/orchestrator]"
 }

@@ -85,10 +85,10 @@ resource "google_bigquery_dataset" "consumer" {
     user_by_email  = google_service_account.dbt.email
   }
 
-  # Surveillance partner read access
+  # Surveillance partner read access - use the computed SA email
   access {
     role           = "READER"
-    user_by_email  = "surveillance-reader@${var.surveillance_partner_project}.iam.gserviceaccount.com"
+    user_by_email  = local.surveillance_partner_sa
   }
 }
 
@@ -149,7 +149,7 @@ resource "google_bigquery_table" "validation_runs" {
   dataset_id          = google_bigquery_dataset.control.dataset_id
   table_id            = "validation_runs"
   description         = "Audit log of all file validation attempts"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/validation_runs.json")
@@ -166,7 +166,7 @@ resource "google_bigquery_table" "dbt_runs" {
   dataset_id          = google_bigquery_dataset.control.dataset_id
   table_id            = "dbt_runs"
   description         = "Audit log of dbt model executions"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/dbt_runs.json")
@@ -183,7 +183,7 @@ resource "google_bigquery_table" "source_completeness" {
   dataset_id          = google_bigquery_dataset.control.dataset_id
   table_id            = "source_completeness"
   description         = "Daily source arrival tracking"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/source_completeness.json")
@@ -193,14 +193,14 @@ resource "google_bigquery_table" "source_completeness" {
     field = "business_date"
   }
 
-  clustering = ["source_name"]
+  clustering = ["source_name", "status"]
 }
 
 resource "google_bigquery_table" "regulatory_submissions" {
   dataset_id          = google_bigquery_dataset.control.dataset_id
   table_id            = "regulatory_submissions"
   description         = "Audit trail of regulatory report submissions"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/regulatory_submissions.json")
@@ -210,14 +210,16 @@ resource "google_bigquery_table" "regulatory_submissions" {
     field = "submitted_at"
   }
 
-  clustering = ["event_id"]
+  # Cluster by status and report_type for common query patterns
+  # (finding failed submissions, filtering by report type)
+  clustering = ["status", "report_type"]
 }
 
 resource "google_bigquery_table" "regulatory_dead_letter" {
   dataset_id          = google_bigquery_dataset.control.dataset_id
   table_id            = "regulatory_dead_letter"
   description         = "Failed regulatory submissions for manual review"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/regulatory_dead_letter.json")
@@ -232,7 +234,7 @@ resource "google_bigquery_table" "streaming_sequence_gaps" {
   dataset_id          = google_bigquery_dataset.control.dataset_id
   table_id            = "streaming_sequence_gaps"
   description         = "Detected gaps in streaming message sequences"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/streaming_sequence_gaps.json")
@@ -242,7 +244,7 @@ resource "google_bigquery_table" "streaming_sequence_gaps" {
     field = "detected_at"
   }
 
-  clustering = ["source_system"]
+  clustering = ["source_system", "severity"]
 }
 
 # ------------------------------------------------------------------------------
@@ -253,7 +255,7 @@ resource "google_bigquery_table" "rfq_stream" {
   dataset_id          = google_bigquery_dataset.raw.dataset_id
   table_id            = "rfq_stream"
   description         = "Streaming RFQ events from Kafka via Pub/Sub"
-  deletion_protection = true
+  deletion_protection = var.enable_deletion_protection
   labels              = local.labels
 
   schema = file("${path.module}/schemas/rfq_stream.json")

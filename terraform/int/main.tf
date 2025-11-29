@@ -15,7 +15,7 @@ terraform {
   # State configuration with locking
   # GCS backend automatically uses object locking for state
   backend "gcs" {
-    bucket = "surveillance-terraform-state"
+    bucket = "markets-terraform-state"
     prefix = "int"
     
     # State locking is automatic with GCS backend
@@ -35,12 +35,12 @@ provider "google-beta" {
 
 locals {
   env         = "int"
-  name_prefix = "surveillance-${local.env}"
+  name_prefix = "markets-${local.env}"
 
   # Standard labels for all resources
   labels = {
     environment = local.env
-    application = "surveillance-pipeline"
+    application = "markets-pipeline"
     managed_by  = "terraform"
     cost_centre = "data-engineering"
   }
@@ -49,7 +49,7 @@ locals {
   surveillance_partner_sa = (
     var.surveillance_partner_service_account != "" 
     ? var.surveillance_partner_service_account 
-    : "surveillance-reader@${var.surveillance_partner_project}.iam.gserviceaccount.com"
+    : "markets-reader@${var.surveillance_partner_project}.iam.gserviceaccount.com"
   )
 }
 

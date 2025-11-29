@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import structlog
 from google.cloud import storage
 
-from orchestrator.config import Config
+from orchestrator.orchestrator.config import Config
 
 log = structlog.get_logger()
 

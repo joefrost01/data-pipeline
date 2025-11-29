@@ -1,0 +1,28 @@
+# Kustomize configuration for Markets Pipeline
+#
+# Usage:
+#   # For int environment:
+#   kustomize build overlays/int | kubectl apply -f -
+#
+#   # Or with kubectl directly:
+#   kubectl apply -k overlays/int
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: markets
+
+resources:
+  - cronjob.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: markets-pipeline
+  app.kubernetes.io/component: orchestrator
+  app.kubernetes.io/managed-by: kustomize
+
+# Image configuration - override in overlays
+images:
+  - name: gcr.io/${PROJECT_ID}/markets-orchestrator
+    newName: gcr.io/markets-int-12345/markets-orchestrator
+    newTag: latest

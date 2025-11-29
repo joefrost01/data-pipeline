@@ -22,5 +22,5 @@ resource "google_secret_manager_secret" "regulator_api_key" {
 
 # Note: Secret values are not managed in Terraform
 # Populate manually or via CI/CD:
-#   gcloud secrets versions add surveillance-int-kafka-credentials --data-file=kafka.json
-#   gcloud secrets versions add surveillance-int-regulator-api-key --data-file=api-key.txt
+#   gcloud secrets versions add markets-int-kafka-credentials --data-file=kafka.json
+#   gcloud secrets versions add markets-int-regulator-api-key --data-file=api-key.txt

@@ -12,6 +12,12 @@
     "description": "When dbt run started"
   },
   {
+    "name": "invocation_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "dbt invocation ID for this run"
+  },
+  {
     "name": "model_name",
     "type": "STRING",
     "mode": "REQUIRED",
@@ -46,11 +52,5 @@
     "type": "STRING",
     "mode": "NULLABLE",
     "description": "Error message if status=error"
-  },
-  {
-    "name": "invocation_id",
-    "type": "STRING",
-    "mode": "REQUIRED",
-    "description": "dbt invocation ID for this run"
   }
 ]

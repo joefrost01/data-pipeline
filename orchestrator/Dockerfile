@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11.7-slim
 
 WORKDIR /app
 
@@ -27,4 +27,4 @@ ENV DBT_PROFILES_DIR=/app/dbt_project
 ENV SOURCE_SPECS_DIR=/app/source_specs
 
 # Run orchestrator
-ENTRYPOINT ["python", "-m", "orchestrator.main"]
+ENTRYPOINT ["python", "-m", "orchestrator.orchestrator.main"]

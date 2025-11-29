@@ -23,20 +23,21 @@ from google.cloud import storage
 from google.api_core import exceptions as gcp_exceptions
 from google.api_core import retry as gcp_retry
 
-from orchestrator.config import Config
-from orchestrator.control import ControlTableWriter
-from orchestrator.metrics import MetricsClient
-from orchestrator.parsers import get_parser
+from orchestrator.orchestrator.config import Config
+from orchestrator.orchestrator.control import ControlTableWriter
+from orchestrator.orchestrator.metrics import MetricsClient
+from orchestrator.orchestrator.parsers import get_parser
 
 log = structlog.get_logger()
 
 # Retry configuration for GCS operations
+# Configurable via environment variables for operational tuning
 GCS_RETRY = gcp_retry.Retry(
     predicate=gcp_retry.if_transient_error,
-    initial=1.0,
-    maximum=60.0,
-    multiplier=2.0,
-    deadline=300.0,
+    initial=float(os.environ.get("GCS_RETRY_INITIAL", "1.0")),
+    maximum=float(os.environ.get("GCS_RETRY_MAXIMUM", "60.0")),
+    multiplier=float(os.environ.get("GCS_RETRY_MULTIPLIER", "2.0")),
+    deadline=float(os.environ.get("GCS_RETRY_DEADLINE", "300.0")),
 )
 
 
@@ -134,10 +135,10 @@ class Validator:
                 total_rows += result.row_count
                 if result.output_path:
                     validated_output_paths.add(result.output_path)
-                self.metrics.increment("surveillance.files.passed")
+                self.metrics.increment("markets.files.passed")
             else:
                 files_failed += 1
-                self.metrics.increment("surveillance.files.failed")
+                self.metrics.increment("markets.files.failed")
                 log.warning(
                     "file_validation_failed",
                     file=result.file_path,
@@ -332,15 +333,20 @@ class Validator:
         control_type = control_config.get("type")
         
         # Get the directory path from the blob name
-        blob_dir = str(Path(blob.name).parent)
-        blob_base = Path(blob.name).stem  # filename without extension
+        blob_path = Path(blob.name)
+        blob_dir = str(blob_path.parent)
+        blob_base = blob_path.stem  # filename without extension
+        
+        # Normalize blob_dir - handle empty, ".", and "" cases
+        if not blob_dir or blob_dir in (".", ""):
+            blob_dir = None
         
         if control_type == "sidecar_xml":
             # Look for .ctrl or _ctrl.xml file
             ctrl_pattern = control_config.get("pattern", "{filename}_ctrl.xml")
             ctrl_name = ctrl_pattern.replace("{filename}", blob_base)
-            # Preserve directory path
-            if blob_dir and blob_dir != ".":
+            # Preserve directory path if present
+            if blob_dir:
                 ctrl_name = f"{blob_dir}/{ctrl_name}"
             ctrl_blob = blob.bucket.blob(ctrl_name)
             
@@ -361,8 +367,8 @@ class Validator:
         elif control_type == "sidecar_csv":
             ctrl_pattern = control_config.get("pattern", "{filename}.ctrl")
             ctrl_name = ctrl_pattern.replace("{filename}", blob_base)
-            # Preserve directory path
-            if blob_dir and blob_dir != ".":
+            # Preserve directory path if present
+            if blob_dir:
                 ctrl_name = f"{blob_dir}/{ctrl_name}"
             ctrl_blob = blob.bucket.blob(ctrl_name)
             

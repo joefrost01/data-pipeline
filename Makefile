@@ -1,4 +1,4 @@
-# Surveillance Pipeline Makefile
+# Markets Pipeline Makefile
 # 
 # Common operations for development and testing
 
@@ -6,7 +6,7 @@
 
 # Default target
 help:
-	@echo "Surveillance Pipeline - Available targets:"
+	@echo "Markets Pipeline - Available targets:"
 	@echo ""
 	@echo "  install          Install all dependencies"
 	@echo "  test             Run all tests"
@@ -39,27 +39,14 @@ lint:
 
 # Validate source specs
 validate-specs:
-	@python -c "\
-import yaml; \
-from pathlib import Path; \
-errors = []; \
-[errors.append(f'{f}: {e}') for f in Path('source_specs').rglob('*.yaml') \
- for e in (lambda s: [f'Missing {r}' for r in ['name','source','schema'] if r not in s])(yaml.safe_load(open(f)))]; \
-print('✓ All specs valid' if not errors else '\\n'.join(['❌ Errors:'] + errors)); \
-exit(1 if errors else 0)"
+	@python scripts/validate_specs.py
 
 # Validate a specific source spec
 validate-spec:
 ifndef SOURCE
 	$(error SOURCE is required. Usage: make validate-spec SOURCE=murex_trades)
 endif
-	@python -c "\
-import yaml; \
-spec = yaml.safe_load(open('source_specs/trading/$(SOURCE).yaml')); \
-required = ['name', 'source', 'schema']; \
-missing = [r for r in required if r not in spec]; \
-print('✓ Valid' if not missing else f'❌ Missing: {missing}'); \
-exit(1 if missing else 0)"
+	@python scripts/validate_specs.py --source $(SOURCE)
 
 # Smoke test a source end-to-end
 test-source:
@@ -67,7 +54,7 @@ ifndef SOURCE
 	$(error SOURCE is required. Usage: make test-source SOURCE=murex_trades)
 endif
 ifndef PROJECT_ID
-	$(eval PROJECT_ID := surveillance-int-12345)
+	$(eval PROJECT_ID := markets-int-12345)
 endif
 	@echo "Running smoke test for source: $(SOURCE)"
 	@echo "Project: $(PROJECT_ID)"
@@ -79,10 +66,10 @@ endif
 	gsutil cp /tmp/test_$(SOURCE).csv gs://$(PROJECT_ID)-landing/$(SOURCE)/test_$(shell date +%Y%m%d%H%M%S).csv
 	@echo ""
 	@echo "Step 3: Trigger pipeline run..."
-	kubectl create job --from=cronjob/surveillance-pipeline smoke-test-$(shell date +%s) -n surveillance
+	kubectl create job --from=cronjob/markets-pipeline smoke-test-$(shell date +%s) -n markets
 	@echo ""
 	@echo "Step 4: Waiting for completion (timeout 10m)..."
-	kubectl wait --for=condition=complete job -l app=surveillance-pipeline -n surveillance --timeout=600s
+	kubectl wait --for=condition=complete job -l app=markets-pipeline -n markets --timeout=600s
 	@echo ""
 	@echo "Step 5: Verify data in BigQuery..."
 	bq query --use_legacy_sql=false \
@@ -97,7 +84,7 @@ endif
 # Full integration test
 integration-test:
 ifndef PROJECT_ID
-	$(eval PROJECT_ID := surveillance-int-12345)
+	$(eval PROJECT_ID := markets-int-12345)
 endif
 	@echo "Running full integration test against $(PROJECT_ID)"
 	@echo ""
@@ -127,12 +114,12 @@ clean:
 
 # Docker build
 docker-build:
-	docker build -t surveillance-orchestrator:latest -f orchestrator/Dockerfile .
+	docker build -t markets-orchestrator:latest -f orchestrator/Dockerfile .
 
 # Deploy to int environment
 deploy-int:
 	@echo "Deploying to int environment..."
-	docker build -t gcr.io/surveillance-int-12345/surveillance-orchestrator:latest -f orchestrator/Dockerfile .
-	docker push gcr.io/surveillance-int-12345/surveillance-orchestrator:latest
-	kubectl rollout restart cronjob/surveillance-pipeline -n surveillance
+	docker build -t gcr.io/markets-int-12345/markets-orchestrator:latest -f orchestrator/Dockerfile .
+	docker push gcr.io/markets-int-12345/markets-orchestrator:latest
+	kubectl rollout restart cronjob/markets-pipeline -n markets
 	@echo "✓ Deployed"

@@ -1,217 +1,147 @@
-# Data Pipeline Fixes
+# Markets Data Pipeline
 
-This directory contains all the fixed files from the code review. Copy these files into your repository to apply the fixes.
+A modern, lightweight data platform for Markets trade surveillance using BigQuery, dbt, and minimal orchestration. Designed for simplicity, auditability, and operational excellence.
 
-## How to Apply
+## Overview
+
+This pipeline ingests trade data from multiple upstream sources (venues, OMS, Bloomberg, Kafka streams, etc.), validates and transforms it through a series of layers, and produces daily extracts for a third-party Trade Surveillance partner.
+
+### Key Features
+
+- **Single repository** containing all pipeline code, tests, documentation, and configuration
+- **Hourly batch processing** with incremental models — always up to date
+- **Streaming capability** for high-volume or low-latency sources
+- **Full audit trail** of every file and message received, validated, and processed
+- **Self-healing pipeline** — drop a file in landing, it gets processed
+- **Deterministic identity** — globally unique, reproducible trade IDs using MD5
+
+## Quick Start
+
+```bash
+# Install dependencies
+make install
+
+# Run linting
+make lint
+
+# Run Python tests
+make test
+
+# Compile dbt to check for errors
+make dbt-compile
+
+# Validate source specs
+make validate-specs
+
+# Smoke test a source
+make test-source SOURCE=murex_trades
+```
+
+## Project Structure
+
+```
+markets-pipeline/
+├── dbt_project/           # dbt models, macros, tests
+│   ├── models/
+│   │   ├── staging/       # Clean, typed source data
+│   │   ├── curation/      # Enriched, joined data (trade_id created here)
+│   │   ├── consumer/      # Mart tables for consumption
+│   │   ├── dimensions/    # Reference dimensions
+│   │   └── control/       # Pipeline control models
+│   ├── snapshots/         # SCD Type 2 dimensions
+│   ├── macros/            # Including generate_trade_id
+│   └── seeds/             # Static reference data
+├── orchestrator/          # Python orchestration code
+│   ├── orchestrator/      # Main package
+│   └── k8s/               # Kubernetes manifests
+├── regulatory_reporter/   # Low-latency reporting service
+├── streaming/             # Kafka bridge components
+├── source_specs/          # YAML source definitions
+├── terraform/             # Infrastructure as code
+├── scripts/               # Utility scripts
+└── docs/                  # Documentation
+```
+
+## Documentation
+
+- [Design Document](docs/design.md) — Architecture overview
+- [Adding a New Source](docs/adding_new_source.md) — Step-by-step guide
+- [Identity Management](docs/identity.md) — Trade ID generation
+- [Streaming Architecture](docs/streaming.md) — Kafka integration
+- [Support Runbook](docs/support_runbook.md) — Operational procedures
+- [Testing Guide](docs/testing.md) — How to test the pipeline
+- [Environment Promotion](docs/environment_promotion.md) — Deployment workflow
+
+## Architecture
+
+The platform comprises three loosely coupled subsystems:
+
+```
+LANE 1: BATCH TRADE PROCESSING (Core)
+  Source Files → GCS Landing → Validator → GCS Staging → BigQuery (dbt) → Extract
+
+LANE 2: HIGH-VOLUME STREAMING INGESTION
+  Kafka → Pub/Sub Bridge → BigQuery Streaming Insert → dbt (hourly merge)
+
+LANE 3: LOW-LATENCY REGULATORY REPORTING
+  Kafka/Pub/Sub → Regulatory Reporter (Cloud Run) → Regulator API
+```
+
+## Key Design Decisions
+
+1. **MD5 for Trade IDs** — Deterministic, BigQuery-native, no coordination required
+2. **SQL for all transformations** — All business rules in dbt, not Python
+3. **Configuration over code** — New sources require only a YAML file
+4. **Self-healing by default** — 7-day window provides resilience for late files
+
+## Environments
+
+| Environment | Project ID | Purpose |
+|-------------|------------|---------|
+| int | markets-int-12345 | Integration testing, UAT |
+| prod | markets-prod-12345 | Production |
+
+## CI/CD
+
+The pipeline uses GitHub Actions for CI:
+
+- Lint checks (ruff, mypy)
+- Python unit tests
+- dbt compile validation
+- Source spec validation
+- **Namespace protection** — CI fails if the trade ID namespace changes
+
+## Applying Fixes
+
+This directory contains updated files. To apply:
 
 ```bash
 # From your repository root:
 cp -r data-pipeline-fixes/* .
 ```
 
-Or selectively copy specific fixes.
-
----
-
-## Critical Fixes
-
-### 1. Race Condition in Archiver (Critical)
-
-**Files:**
-- `orchestrator/orchestrator/archiver.py` - Complete rewrite
-- `orchestrator/orchestrator/validator.py` - Added `validated_output_paths` to result
-- `orchestrator/orchestrator/main.py` - Updated to pass paths to archiver
-
-**Problem:** The archiver queried BigQuery for files validated "before run_start_time", but the validator writes records during the same run, causing some files to be missed or incorrectly archived.
-
-**Solution:** Pass the set of validated output paths directly from the validator to the archiver, eliminating the database query entirely.
-
-### 2. MD5 vs UUID5 Documentation Mismatch (Critical)
-
-**Files:**
-- `docs/design_identity_section_fix.md` - Replacement text for design.md
-
-**Problem:** Documentation mentions UUID5 but implementation uses MD5.
-
-**Solution:** Updated documentation to accurately describe MD5 usage with clear notes about Python compatibility.
-
-### 3. Missing stg_venue_a_trades Model (Critical)
-
-**Files:**
-- `dbt_project/models/staging/stg_venue_a_trades.sql` - New file
-
-**Problem:** `trades_enriched.sql` references this model but it didn't exist.
-
-**Solution:** Created the staging model (note: the file was in the documents but listed as a separate document - this ensures it's in the right location).
-
-### 4. Duplicate schema.yml Content (Critical)
-
-**Files:**
-- `dbt_project/models/staging/schema.yml` - Complete rewrite
-
-**Problem:** staging/schema.yml contained dim_instrument documentation that belongs in dimensions/schema.yml.
-
-**Solution:** Removed duplicate content and added proper documentation for all staging models.
-
----
-
-## High Priority Fixes
-
-### 5. Counterparty Cache Duplicate Issue
-
-**Files:**
-- `regulatory_reporter/main.py` - Complete rewrite
-
-**Problem:** Counterparty cache used single dict for both ID and name lookup, causing silent overwrites when names collide.
-
-**Solution:** Separate `counterparties_by_id` and `counterparties_by_name` dictionaries.
-
-### 6 & 9. Event ID Generation Mismatch
-
-**Files:**
-- `regulatory_reporter/main.py` - Fixed `_generate_event_id` method
-
-**Problem:** Python event ID generation didn't include namespace or "event" prefix, unlike the dbt macro.
-
-**Solution:** Updated to match dbt format: `{namespace}:event:{domain}:{source_system}:{source_event_id}`
-
-### 7. Missing Staging Models for Snapshots
-
-**Files:**
-- `dbt_project/models/staging/stg_counterparties.sql` - New file
-- `dbt_project/models/staging/stg_books.sql` - New file
-- `dbt_project/snapshots/counterparties_snapshot.sql` - Updated to use staging
-- `dbt_project/snapshots/books_snapshot.sql` - Updated to use staging
-
-**Problem:** Snapshots referenced non-existent staging models.
-
-**Solution:** Created the missing staging models and updated snapshots to reference them.
-
-### 8. Missing Orchestrator BigQuery IAM
-
-**Files:**
-- `terraform/int/iam.tf` - Added BigQuery permissions
-
-**Problem:** Orchestrator service account lacked BigQuery permissions.
-
-**Solution:** Added `bigquery.jobUser` and dataset-level `dataEditor`/`dataViewer` roles for all service accounts.
-
----
-
-## Medium Priority Fixes
-
-### 10. Duplicate Streaming Bridge
-
-**Files:**
-- `streaming/bridge.py` - Now re-exports from orchestrator
-
-**Problem:** Same code existed in two places.
-
-**Solution:** `streaming/bridge.py` now imports from `orchestrator.bridge` instead of duplicating code.
-
-### 12. Invalid expected_sources.csv
-
-**Files:**
-- `dbt_project/seeds/expected_sources.csv` - Removed non-existent sources
-
-**Problem:** Referenced sources (venue_b_trades, bloomberg_rfqs) that don't exist.
-
-**Solution:** Removed non-existent sources; add them back when implemented.
-
-### 13. XML Namespace Handling
-
-**Files:**
-- `orchestrator/orchestrator/parsers.py` - Fixed XML parser
-
-**Problem:** XML parser didn't handle namespaced elements like `mx:Trade`.
-
-**Solution:** Added `_build_tag_matcher` and `_element_matches` methods to properly handle Clark notation namespaces.
-
-### 14. Control File Path Bug
-
-**Files:**
-- `orchestrator/orchestrator/validator.py` - Fixed `_get_expected_row_count`
-
-**Problem:** Control file lookup didn't preserve directory path.
-
-**Solution:** Now correctly constructs control file path including parent directory.
-
-### 17. force_full_refresh Variable
-
-**Files:**
-- `dbt_project/models/curation/trades_enriched.sql` - Fixed variable usage
-
-**Problem:** `full_refresh` config option doesn't work at runtime as intended.
-
-**Solution:** Use the variable in the incremental filter logic instead: `{% if is_incremental() and not do_full_refresh %}`
-
----
-
-## Low Priority Fixes
-
-### 19. trade_model_v2.md Status
-
-**Files:**
-- `docs/trade_model_v2_header.md` - Header to prepend to existing doc
-
-**Problem:** Document describes future state but wasn't marked as such.
-
-**Solution:** Added clear status note explaining this is a future design, not current implementation.
-
----
-
-## New Files Added
-
-### CI Workflow
-- `.github/workflows/ci.yml` - Complete CI pipeline including namespace check
-
-### Makefile
-- `Makefile` - Common operations referenced in docs
-
----
-
-## Files Summary
-
-```
-data-pipeline-fixes/
-├── .github/
-│   └── workflows/
-│       └── ci.yml                          # NEW: CI pipeline
-├── dbt_project/
-│   ├── models/
-│   │   ├── curation/
-│   │   │   └── trades_enriched.sql         # FIXED: force_full_refresh logic
-│   │   └── staging/
-│   │       ├── schema.yml                  # FIXED: removed duplicate content
-│   │       ├── stg_books.sql               # NEW: missing staging model
-│   │       ├── stg_counterparties.sql      # NEW: missing staging model
-│   │       └── stg_venue_a_trades.sql      # NEW: missing staging model
-│   ├── seeds/
-│   │   └── expected_sources.csv            # FIXED: removed non-existent sources
-│   └── snapshots/
-│       ├── books_snapshot.sql              # FIXED: reference staging model
-│       └── counterparties_snapshot.sql     # FIXED: reference staging model
-├── docs/
-│   ├── design_identity_section_fix.md      # REPLACEMENT: for design.md sections
-│   └── trade_model_v2_header.md            # PREPEND: to trade_model_v2.md
-├── orchestrator/
-│   └── orchestrator/
-│       ├── archiver.py                     # FIXED: race condition
-│       ├── main.py                         # FIXED: pass validated paths
-│       ├── parsers.py                      # FIXED: XML namespace handling
-│       └── validator.py                    # FIXED: return validated paths, GCS retry
-├── regulatory_reporter/
-│   └── main.py                             # FIXED: cache & event ID
-├── streaming/
-│   └── bridge.py                           # FIXED: import from orchestrator
-├── terraform/
-│   └── int/
-│       └── iam.tf                          # FIXED: BigQuery permissions
-├── Makefile                                # NEW: common operations
-└── README.md                               # This file
-```
-
----
+Or selectively copy specific files.
+
+## Files Changed
+
+### Critical Fixes
+- `streaming/bridge.py` — Fixed import path
+- `orchestrator/__init__.py` — Added missing package init
+- `orchestrator/orchestrator/validator.py` — Fixed control file path handling
+- `orchestrator/orchestrator/extract.py` — Added temp table cleanup in finally block
+- `dbt_project/models/consumer/markets_extract.sql` — Renamed from surveillance_extract
+
+### Naming Consistency (surveillance → markets)
+- All Terraform files updated
+- K8s manifests updated
+- Makefile updated
+- Metric names updated in orchestrator
+
+### Improvements
+- `scripts/validate_specs.py` — Proper script replacing Makefile one-liner
+- `orchestrator/k8s/kustomization.yaml` — Added Kustomize support
+- `terraform/int/bigquery.tf` — Better clustering on control tables
+- `dbt_project/dbt_project.yml` — Added `force_full_refresh` variable
 
 ## Testing After Applying
 

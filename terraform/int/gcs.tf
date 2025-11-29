@@ -138,7 +138,7 @@ resource "google_storage_bucket" "extracts" {
 # This is referenced in backend config but defined here for documentation
 # 
 # resource "google_storage_bucket" "terraform_state" {
-#   name          = "surveillance-terraform-state"
+#   name          = "markets-terraform-state"
 #   location      = var.region
 #   force_destroy = false  # NEVER delete state bucket
 #   

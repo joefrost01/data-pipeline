@@ -1,10 +1,25 @@
+# Markets Data Pipeline - Kubernetes CronJob
+#
+# IMPORTANT: This manifest requires preprocessing before deployment.
+# Use one of the following methods:
+#
+# Option 1 - envsubst:
+#   export PROJECT_ID=markets-int-12345
+#   envsubst < cronjob.yaml | kubectl apply -f -
+#
+# Option 2 - Kustomize (recommended):
+#   See kustomization.yaml in this directory
+#
+# Option 3 - Helm:
+#   Use the Helm chart in ../helm/markets-pipeline/
+
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: surveillance-pipeline
-  namespace: surveillance
+  name: markets-pipeline
+  namespace: markets
   labels:
-    app: surveillance-pipeline
+    app: markets-pipeline
     component: orchestrator
 spec:
   schedule: "0 * * * *"  # Every hour
@@ -18,7 +33,7 @@ spec:
       template:
         metadata:
           labels:
-            app: surveillance-pipeline
+            app: markets-pipeline
             component: orchestrator
         spec:
           serviceAccountName: orchestrator
@@ -26,49 +41,50 @@ spec:
           
           containers:
           - name: orchestrator
-            image: gcr.io/${PROJECT_ID}/surveillance-orchestrator:latest
+            # NOTE: Replace ${PROJECT_ID} via envsubst, Kustomize, or Helm
+            image: gcr.io/${PROJECT_ID}/markets-orchestrator:latest
             imagePullPolicy: Always
             
             env:
             - name: ENV
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: env
             - name: PROJECT_ID
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: project_id
             - name: REGION
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: region
             - name: LANDING_BUCKET
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: landing_bucket
             - name: STAGING_BUCKET
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: staging_bucket
             - name: ARCHIVE_BUCKET
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: archive_bucket
             - name: FAILED_BUCKET
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: failed_bucket
             - name: EXTRACTS_BUCKET
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: extracts_bucket
             - name: EXTRACT_HOUR
               value: "6"
@@ -77,7 +93,7 @@ spec:
             - name: DYNATRACE_ENDPOINT
               valueFrom:
                 configMapKeyRef:
-                  name: surveillance-config
+                  name: markets-config
                   key: dynatrace_endpoint
             
             resources:
@@ -102,17 +118,17 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: surveillance-config
-  namespace: surveillance
+  name: markets-config
+  namespace: markets
 data:
   env: "int"
-  project_id: "surveillance-int-12345"
+  project_id: "markets-int-12345"
   region: "europe-west2"
-  landing_bucket: "surveillance-int-landing"
-  staging_bucket: "surveillance-int-staging"
-  archive_bucket: "surveillance-int-archive"
-  failed_bucket: "surveillance-int-failed"
-  extracts_bucket: "surveillance-int-extracts"
+  landing_bucket: "markets-int-landing"
+  staging_bucket: "markets-int-staging"
+  archive_bucket: "markets-int-archive"
+  failed_bucket: "markets-int-failed"
+  extracts_bucket: "markets-int-extracts"
   dynatrace_endpoint: "https://your-tenant.live.dynatrace.com"
 
 ---
@@ -120,6 +136,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: orchestrator
-  namespace: surveillance
+  namespace: markets
   annotations:
-    iam.gke.io/gcp-service-account: surveillance-int-orchestrator@surveillance-int-12345.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: markets-int-orchestrator@markets-int-12345.iam.gserviceaccount.com

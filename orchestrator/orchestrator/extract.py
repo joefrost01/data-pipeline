@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 import structlog
 from google.cloud import bigquery, storage
 
-from orchestrator.config import Config
-from orchestrator.metrics import MetricsClient
+from orchestrator.orchestrator.config import Config
+from orchestrator.orchestrator.metrics import MetricsClient
 
 log = structlog.get_logger()
 
@@ -46,13 +46,13 @@ class ExtractGenerator:
         output_path = (
             f"gs://{self.config.extracts_bucket}/"
             f"{today.isoformat()}/"
-            f"surveillance_extract_{today.isoformat()}.{extension}"
+            f"markets_extract_{today.isoformat()}.{extension}"
         )
         
         # Query for row count first (for logging)
         count_query = f"""
             SELECT COUNT(*) as cnt
-            FROM consumer.surveillance_extract
+            FROM consumer.markets_extract
             WHERE trade_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {self.config.extract_window_days} DAY)
         """
         count_result = self.bq_client.query(count_query).result()
@@ -71,31 +71,40 @@ class ExtractGenerator:
         
         extract_query = f"""
             SELECT *
-            FROM consumer.surveillance_extract
+            FROM consumer.markets_extract
             WHERE trade_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {self.config.extract_window_days} DAY)
         """
         
-        query_job = self.bq_client.query(
-            extract_query,
-            job_config=bigquery.QueryJobConfig(destination=temp_table),
-        )
-        query_job.result()  # Wait for query
-        
-        # Extract temp table to GCS
-        job_config = bigquery.ExtractJobConfig(
-            destination_format=destination_format,
-            compression=compression,
-        )
-        
-        extract_job = self.bq_client.extract_table(
-            temp_table,
-            output_path,
-            job_config=job_config,
-        )
-        extract_job.result()  # Wait for extract
-        
-        # Clean up temp table
-        self.bq_client.delete_table(temp_table, not_found_ok=True)
+        try:
+            query_job = self.bq_client.query(
+                extract_query,
+                job_config=bigquery.QueryJobConfig(destination=temp_table),
+            )
+            query_job.result()  # Wait for query
+            
+            # Extract temp table to GCS
+            job_config = bigquery.ExtractJobConfig(
+                destination_format=destination_format,
+                compression=compression,
+            )
+            
+            extract_job = self.bq_client.extract_table(
+                temp_table,
+                output_path,
+                job_config=job_config,
+            )
+            extract_job.result()  # Wait for extract
+            
+        finally:
+            # Always clean up temp table, even on failure
+            try:
+                self.bq_client.delete_table(temp_table, not_found_ok=True)
+            except Exception as cleanup_error:
+                log.warning(
+                    "temp_table_cleanup_failed",
+                    table=temp_table,
+                    error=str(cleanup_error),
+                )
         
         # Get file size
         bucket_name = self.config.extracts_bucket
