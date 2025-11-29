@@ -8,13 +8,7 @@
             'data_type': 'date',
             'granularity': 'day'
         },
-        cluster_by=['trader_id', 'instrument_id'],
-        
-        -- Full refresh weekly to pick up late reference data changes
-        -- This is a trade-off: we prioritise processing speed over 
-        -- perfect enrichment. Trades within the 7-day window will be
-        -- re-enriched on the weekly full refresh.
-        full_refresh = var('force_full_refresh', false)
+        cluster_by=['trader_id', 'instrument_id']
     )
 }}
 
@@ -39,6 +33,9 @@
     3. For SCD-1 dimensions (instruments), we use current state.
     
     To force a full refresh (e.g., after major reference data corrections):
+        dbt run --select trades_enriched --full-refresh
+    
+    Or with the variable:
         dbt run --select trades_enriched --vars '{"force_full_refresh": true}'
     
     ## Counterparty Matching
@@ -67,6 +64,9 @@
     )
 {% endmacro %}
 
+-- Check if we should do a full refresh
+{% set do_full_refresh = var('force_full_refresh', false) %}
+
 with murex as (
     select
         source_trade_id,
@@ -82,7 +82,7 @@ with murex as (
         book_id,
         loaded_at
     from {{ ref('stg_murex_trades') }}
-    {% if is_incremental() %}
+    {% if is_incremental() and not do_full_refresh %}
     where loaded_at > (select coalesce(max(loaded_at), '1900-01-01') from {{ this }})
     {% endif %}
 ),
@@ -107,7 +107,7 @@ venue_a as (
         book_id,
         loaded_at
     from {{ ref('stg_venue_a_trades') }}
-    {% if is_incremental() %}
+    {% if is_incremental() and not do_full_refresh %}
     where loaded_at > (select coalesce(max(loaded_at), '1900-01-01') from {{ this }})
     {% endif %}
 ),

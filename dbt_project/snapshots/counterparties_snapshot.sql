@@ -20,12 +20,11 @@
 */
 
 select
-    cast(counterparty_id as string) as counterparty_id,
-    cast(counterparty_name as string) as counterparty_name,
-    cast(lei as string) as lei,
-    cast(country as string) as country,
-    cast(status as string) as status
-from {{ source('reference', 'counterparties') }}
-where counterparty_id is not null
+    counterparty_id,
+    counterparty_name,
+    lei,
+    country,
+    status
+from {{ ref('stg_counterparties') }}
 
 {% endsnapshot %}

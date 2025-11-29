@@ -1,33 +1,215 @@
 version: 2
 
 models:
-  - name: dim_instrument
+  - name: stg_murex_trades
     description: |
-      Instrument dimension (SCD Type 1 - current state only).
-      
-      We use SCD-1 here because:
-      - Millions of instruments across asset classes
-      - Frequent minor attribute updates on OTC instruments
-      - SCD-2 would multiply storage significantly
-      - Most analytics need current attributes
+      Cleaned trade data from Murex back office system.
+      Maps XML fields to canonical schema.
     columns:
-      - name: instrument_id
-        description: Unique instrument identifier
+      - name: source_trade_id
+        description: Murex native trade identifier
         tests:
-          - unique
           - not_null
-      - name: symbol
-        description: Trading symbol
-      - name: isin
-        description: ISIN code (may be null for OTC instruments)
-      - name: asset_class
-        description: Asset class (e.g., EQUITY, FX, RATES)
+      - name: source_system
+        description: Always 'MUREX'
         tests:
           - accepted_values:
-              values: ['EQUITY', 'FX', 'RATES', 'CREDIT', 'COMMODITIES', 'OTHER']
-              config:
-                severity: warn
-      - name: currency
-        description: Primary currency
+              values: ['MUREX']
+      - name: trade_time
+        description: Execution timestamp (UTC)
         tests:
           - not_null
+      - name: counterparty_name
+        description: Counterparty legal name
+      - name: trader_id
+        description: Trader identifier
+        tests:
+          - not_null
+      - name: instrument_id
+        description: Instrument identifier
+        tests:
+          - not_null
+      - name: side
+        description: Trade direction (BUY or SELL)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BUY', 'SELL']
+      - name: quantity
+        description: Trade quantity
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: price
+        description: Execution price
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+      - name: book_id
+        description: Trading book identifier
+      - name: loaded_at
+        description: Pipeline ingestion timestamp
+        tests:
+          - not_null
+
+  - name: stg_venue_a_trades
+    description: |
+      Cleaned trade data from Venue A.
+      Normalises B/S side values to BUY/SELL.
+    columns:
+      - name: source_trade_id
+        description: Venue execution ID
+        tests:
+          - not_null
+      - name: source_system
+        description: Always 'VENUE_A'
+        tests:
+          - accepted_values:
+              values: ['VENUE_A']
+      - name: trade_time
+        description: Execution timestamp
+        tests:
+          - not_null
+      - name: counterparty_name
+        description: Not provided by this source
+      - name: trader_id
+        description: Trader identifier
+      - name: instrument_id
+        description: Instrument symbol
+        tests:
+          - not_null
+      - name: side
+        description: Trade direction (normalised to BUY/SELL)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BUY', 'SELL']
+      - name: quantity
+        description: Executed quantity
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: price
+        description: Execution price
+        tests:
+          - not_null
+      - name: book_id
+        description: Not provided by this source
+      - name: loaded_at
+        description: Pipeline ingestion timestamp
+        tests:
+          - not_null
+
+  - name: stg_rfqs
+    description: |
+      Streaming RFQ events from Kafka via Pub/Sub.
+      Deduplicates at-least-once delivery using event_id + ingestion_time.
+    columns:
+      - name: rfq_id
+        description: Unique RFQ identifier
+        tests:
+          - not_null
+          - unique
+      - name: rfq_timestamp
+        description: RFQ creation time
+        tests:
+          - not_null
+      - name: trader_id
+        description: Trader identifier
+        tests:
+          - not_null
+      - name: instrument_id
+        description: Instrument identifier
+        tests:
+          - not_null
+      - name: side
+        description: BUY or SELL
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BUY', 'SELL']
+      - name: quantity
+        description: Requested quantity
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: price
+        description: Quoted price
+      - name: counterparty_id
+        description: Counterparty identifier
+      - name: source_sequence_id
+        description: Sequence ID for gap detection
+      - name: _kafka_partition
+        description: Source Kafka partition
+      - name: _kafka_offset
+        description: Source Kafka offset
+      - name: loaded_at
+        description: BigQuery ingestion timestamp
+        tests:
+          - not_null
+
+  - name: stg_traders
+    description: |
+      Cleaned trader reference data.
+    columns:
+      - name: trader_id
+        description: Unique trader identifier
+        tests:
+          - not_null
+          - unique
+      - name: trader_name
+        description: Trader display name
+      - name: desk_id
+        description: Desk assignment
+      - name: status
+        description: Active/Inactive status
+      - name: compliance_officer
+        description: Assigned compliance officer
+      - name: loaded_at
+        description: Pipeline ingestion timestamp
+        tests:
+          - not_null
+
+  - name: stg_counterparties
+    description: |
+      Cleaned counterparty reference data.
+    columns:
+      - name: counterparty_id
+        description: Unique counterparty identifier
+        tests:
+          - not_null
+          - unique
+      - name: counterparty_name
+        description: Legal entity name
+        tests:
+          - not_null
+      - name: lei
+        description: Legal Entity Identifier
+      - name: country
+        description: Country of incorporation
+      - name: status
+        description: Active/Inactive status
+      - name: loaded_at
+        description: Pipeline ingestion timestamp
+
+  - name: stg_books
+    description: |
+      Cleaned trading book reference data.
+    columns:
+      - name: book_id
+        description: Unique book identifier
+        tests:
+          - not_null
+          - unique
+      - name: book_name
+        description: Book display name
+      - name: desk_id
+        description: Owning desk
+      - name: legal_entity
+        description: Legal entity
+      - name: loaded_at
+        description: Pipeline ingestion timestamp

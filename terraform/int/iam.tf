@@ -94,6 +94,90 @@ resource "google_storage_bucket_iam_member" "dbt_staging_read" {
 }
 
 # ------------------------------------------------------------------------------
+# BigQuery Permissions
+# ------------------------------------------------------------------------------
+
+# Orchestrator needs BigQuery access for:
+# - Writing to control tables (validation_runs, etc.)
+# - Running extract queries
+
+resource "google_project_iam_member" "orchestrator_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.orchestrator.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "orchestrator_control_writer" {
+  dataset_id = google_bigquery_dataset.control.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.orchestrator.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "orchestrator_consumer_reader" {
+  dataset_id = google_bigquery_dataset.consumer.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.orchestrator.email}"
+}
+
+# Validator needs BigQuery access for writing validation_runs
+resource "google_project_iam_member" "validator_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.validator.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "validator_control_writer" {
+  dataset_id = google_bigquery_dataset.control.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.validator.email}"
+}
+
+# dbt needs BigQuery access for transformations
+resource "google_project_iam_member" "dbt_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.dbt.email}"
+}
+
+resource "google_project_iam_member" "dbt_bq_data_editor" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.dbt.email}"
+}
+
+# Regulatory reporter needs BigQuery access for cache refresh and audit logging
+resource "google_project_iam_member" "regulatory_reporter_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.regulatory_reporter.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "regulatory_reporter_snapshots_reader" {
+  dataset_id = google_bigquery_dataset.snapshots.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.regulatory_reporter.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "regulatory_reporter_curation_reader" {
+  dataset_id = google_bigquery_dataset.curation.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.regulatory_reporter.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "regulatory_reporter_control_writer" {
+  dataset_id = google_bigquery_dataset.control.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.regulatory_reporter.email}"
+}
+
+# Streaming bridge needs BigQuery write access for streaming inserts
+resource "google_bigquery_dataset_iam_member" "streaming_bridge_raw_writer" {
+  dataset_id = google_bigquery_dataset.raw.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.streaming_bridge.email}"
+}
+
+# ------------------------------------------------------------------------------
 # Pub/Sub Permissions
 # ------------------------------------------------------------------------------
 

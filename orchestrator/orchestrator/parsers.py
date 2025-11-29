@@ -269,13 +269,20 @@ class XmlParser(Parser):
         row_element = spec["source"]["row_element"]
         schema = {field["name"]: field for field in spec["schema"]}
         
-        # Check for streaming mode on large files
-        streaming_threshold = xml_config.get("streaming_threshold_mb", 100)
+        # Build the tag matcher - handle namespaced elements
+        tag_matcher = self._build_tag_matcher(row_element, namespaces)
         
         # Parse XML with iterparse for memory efficiency
-        context = etree.iterparse(file_path, events=("end",), tag=row_element)
+        # Use tag=None to match all elements, then filter
+        context = etree.iterparse(file_path, events=("end",))
         
-        for row_num, (event, elem) in enumerate(context, start=1):
+        row_num = 0
+        for event, elem in context:
+            # Check if this element matches our row element
+            if not self._element_matches(elem, row_element, namespaces):
+                continue
+            
+            row_num += 1
             row = {}
             for field in spec["schema"]:
                 xpath = field.get("xpath")
@@ -315,6 +322,35 @@ class XmlParser(Parser):
                 del elem.getparent()[0]
         
         return valid_rows, quarantined
+    
+    def _build_tag_matcher(self, row_element: str, namespaces: dict) -> str:
+        """Build a tag string that works with lxml for namespaced elements.
+        
+        Converts 'ns:Element' to '{http://namespace.uri}Element' (Clark notation).
+        """
+        if ":" in row_element:
+            prefix, local = row_element.split(":", 1)
+            if prefix in namespaces:
+                return f"{{{namespaces[prefix]}}}{local}"
+        return row_element
+    
+    def _element_matches(self, elem: Any, row_element: str, namespaces: dict) -> bool:
+        """Check if an element matches the expected row element.
+        
+        Handles both namespaced (ns:Element) and non-namespaced elements.
+        """
+        # Build the expected tag in Clark notation
+        expected_tag = self._build_tag_matcher(row_element, namespaces)
+        
+        # Compare with the element's tag (which is always in Clark notation)
+        if elem.tag == expected_tag:
+            return True
+        
+        # Also check local name only (for non-namespaced elements)
+        local_name = row_element.split(":")[-1] if ":" in row_element else row_element
+        elem_local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+        
+        return elem_local == local_name
     
     def _validate_row(
         self, row: dict, schema: dict, row_num: int

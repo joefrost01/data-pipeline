@@ -19,11 +19,10 @@
 */
 
 select
-    cast(book_id as string) as book_id,
-    cast(book_name as string) as book_name,
-    cast(desk_id as string) as desk_id,
-    cast(legal_entity as string) as legal_entity
-from {{ source('reference', 'books') }}
-where book_id is not null
+    book_id,
+    book_name,
+    desk_id,
+    legal_entity
+from {{ ref('stg_books') }}
 
 {% endsnapshot %}

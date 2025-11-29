@@ -12,7 +12,7 @@ Key safety features:
 import hashlib
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,7 @@ import structlog
 import yaml
 from google.cloud import storage
 from google.api_core import exceptions as gcp_exceptions
+from google.api_core import retry as gcp_retry
 
 from orchestrator.config import Config
 from orchestrator.control import ControlTableWriter
@@ -28,6 +29,15 @@ from orchestrator.metrics import MetricsClient
 from orchestrator.parsers import get_parser
 
 log = structlog.get_logger()
+
+# Retry configuration for GCS operations
+GCS_RETRY = gcp_retry.Retry(
+    predicate=gcp_retry.if_transient_error,
+    initial=1.0,
+    maximum=60.0,
+    multiplier=2.0,
+    deadline=300.0,
+)
 
 
 @dataclass
@@ -37,6 +47,7 @@ class ValidationResult:
     files_failed: int
     total_rows: int
     run_start_time: datetime
+    validated_output_paths: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -92,6 +103,7 @@ class Validator:
         files_passed = 0
         files_failed = 0
         total_rows = 0
+        validated_output_paths: set[str] = set()
         
         # List all files in landing
         blobs = list(landing_bucket.list_blobs())
@@ -120,6 +132,8 @@ class Validator:
             if result.passed:
                 files_passed += 1
                 total_rows += result.row_count
+                if result.output_path:
+                    validated_output_paths.add(result.output_path)
                 self.metrics.increment("surveillance.files.passed")
             else:
                 files_failed += 1
@@ -135,6 +149,7 @@ class Validator:
             files_failed=files_failed,
             total_rows=total_rows,
             run_start_time=self.run_start_time,
+            validated_output_paths=validated_output_paths,
         )
     
     def _validate_file(
@@ -161,9 +176,9 @@ class Validator:
         
         local_path = None
         try:
-            # Download file
+            # Download file with retry
             local_path = f"/tmp/{hashlib.md5(blob.name.encode()).hexdigest()}"
-            blob.download_to_filename(local_path)
+            blob.download_to_filename(local_path, retry=GCS_RETRY)
             
             # Parse and validate
             parser = get_parser(spec)
@@ -198,7 +213,7 @@ class Validator:
             
             # Safe to delete from landing now
             try:
-                blob.delete()
+                blob.delete(retry=GCS_RETRY)
             except gcp_exceptions.NotFound:
                 # File might have been deleted by another process - that's OK
                 log.warning("source_file_already_deleted", file=blob.name)
@@ -250,7 +265,7 @@ class Validator:
             blob = staging_bucket.blob(blob_name)
             
             # Force reload metadata from server
-            blob.reload()
+            blob.reload(retry=GCS_RETRY)
             
             # Verify file exists and has content
             if blob.size is None or blob.size == 0:
@@ -316,17 +331,23 @@ class Validator:
         control_config = spec.get("control_file", {})
         control_type = control_config.get("type")
         
+        # Get the directory path from the blob name
+        blob_dir = str(Path(blob.name).parent)
+        blob_base = Path(blob.name).stem  # filename without extension
+        
         if control_type == "sidecar_xml":
             # Look for .ctrl or _ctrl.xml file
             ctrl_pattern = control_config.get("pattern", "{filename}_ctrl.xml")
-            base_name = blob.name.rsplit(".", 1)[0]
-            ctrl_name = ctrl_pattern.replace("{filename}", base_name)
+            ctrl_name = ctrl_pattern.replace("{filename}", blob_base)
+            # Preserve directory path
+            if blob_dir and blob_dir != ".":
+                ctrl_name = f"{blob_dir}/{ctrl_name}"
             ctrl_blob = blob.bucket.blob(ctrl_name)
             
             try:
                 if ctrl_blob.exists():
                     import xml.etree.ElementTree as ET
-                    ctrl_content = ctrl_blob.download_as_text()
+                    ctrl_content = ctrl_blob.download_as_text(retry=GCS_RETRY)
                     root = ET.fromstring(ctrl_content)
                     xpath = control_config.get("xpath_row_count", "RecordCount")
                     # Handle xpath with leading /
@@ -335,26 +356,28 @@ class Validator:
                     if element is not None and element.text:
                         return int(element.text)
             except Exception as e:
-                log.warning("control_file_parse_error", error=str(e))
+                log.warning("control_file_parse_error", error=str(e), ctrl_path=ctrl_name)
         
         elif control_type == "sidecar_csv":
             ctrl_pattern = control_config.get("pattern", "{filename}.ctrl")
-            base_name = blob.name.rsplit(".", 1)[0]
-            ctrl_name = ctrl_pattern.replace("{filename}", base_name)
+            ctrl_name = ctrl_pattern.replace("{filename}", blob_base)
+            # Preserve directory path
+            if blob_dir and blob_dir != ".":
+                ctrl_name = f"{blob_dir}/{ctrl_name}"
             ctrl_blob = blob.bucket.blob(ctrl_name)
             
             try:
                 if ctrl_blob.exists():
                     import csv
                     from io import StringIO
-                    ctrl_content = ctrl_blob.download_as_text()
+                    ctrl_content = ctrl_blob.download_as_text(retry=GCS_RETRY)
                     reader = csv.DictReader(StringIO(ctrl_content))
                     row = next(reader, None)
                     if row:
                         field = control_config.get("row_count_field", "record_count")
                         return int(row.get(field, 0))
             except Exception as e:
-                log.warning("control_file_parse_error", error=str(e))
+                log.warning("control_file_parse_error", error=str(e), ctrl_path=ctrl_name)
         
         return None
     
@@ -369,10 +392,11 @@ class Validator:
         import pyarrow as pa
         import pyarrow.parquet as pq
         
-        # Generate output path
+        # Generate output path preserving directory structure
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        base_name = Path(original_name).stem
-        parent = Path(original_name).parent
+        original_path = Path(original_name)
+        base_name = original_path.stem
+        parent = original_path.parent
         output_name = f"{parent}/{base_name}_{timestamp}.parquet"
         
         # Convert to Parquet
@@ -386,6 +410,7 @@ class Validator:
             output_blob.upload_from_filename(
                 local_parquet,
                 timeout=120,  # 2 minute timeout for large files
+                retry=GCS_RETRY,
             )
             
             return f"gs://{staging_bucket.name}/{output_name}"
@@ -409,7 +434,7 @@ class Validator:
         content = "\n".join(json.dumps(row, default=str) for row in quarantined)
         
         blob = failed_bucket.blob(output_name)
-        blob.upload_from_string(content)
+        blob.upload_from_string(content, retry=GCS_RETRY)
         
         log.info(
             "quarantined_rows_written",
@@ -434,7 +459,7 @@ class Validator:
         try:
             # Copy to failed bucket (keep original as backup)
             failed_blob = failed_bucket.blob(failed_name)
-            failed_blob.rewrite(blob)
+            failed_blob.rewrite(blob, retry=GCS_RETRY)
             
             # Write error log
             error_log = failed_bucket.blob(f"{failed_name}.error.txt")
@@ -443,10 +468,10 @@ Timestamp: {timestamp}
 Source file: gs://{blob.bucket.name}/{blob.name}
 Source name: {source_name}
 """
-            error_log.upload_from_string(error_content)
+            error_log.upload_from_string(error_content, retry=GCS_RETRY)
             
             # Delete from landing only after successful copy to failed
-            blob.delete()
+            blob.delete(retry=GCS_RETRY)
             
         except Exception as e:
             log.error(

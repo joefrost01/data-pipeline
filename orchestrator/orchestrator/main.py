@@ -70,10 +70,9 @@ def main() -> int:
         metrics.gauge("surveillance.tests.failed", dbt_result.tests_failed)
         
         # Step 3: Archive processed files
-        # Use validation run_start_time to only archive files that were
-        # validated before this run started (prevents race condition)
+        # Pass the set of validated output paths directly to avoid race conditions
         log.info("step_started", step="archive")
-        archiver = Archiver(config, validation_result.run_start_time)
+        archiver = Archiver(config, validation_result.validated_output_paths)
         archive_result = archiver.run()
         
         log.info(

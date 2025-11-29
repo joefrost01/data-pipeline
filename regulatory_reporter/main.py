@@ -27,6 +27,9 @@ log = structlog.get_logger()
 
 app = Flask(__name__)
 
+# Namespace for deterministic event ID generation (must match dbt macro)
+MARKETS_NAMESPACE = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 @dataclass
 class CacheConfig:
@@ -40,7 +43,8 @@ class CacheConfig:
 class ReferenceCache:
     """In-memory cache for reference data."""
     traders: dict[str, dict] = field(default_factory=dict)
-    counterparties: dict[str, dict] = field(default_factory=dict)
+    counterparties_by_id: dict[str, dict] = field(default_factory=dict)
+    counterparties_by_name: dict[str, dict] = field(default_factory=dict)
     instruments: dict[str, dict] = field(default_factory=dict)
     books: dict[str, dict] = field(default_factory=dict)
     last_refresh: datetime | None = None
@@ -110,17 +114,21 @@ class RegulatoryReporter:
             for row in self.bq_client.query(traders_query).result():
                 traders[row.trader_id] = dict(row)
             
-            # Refresh counterparties
+            # Refresh counterparties - use SEPARATE dicts for ID and name lookup
             counterparties_query = """
                 SELECT counterparty_id, counterparty_name, lei, country
                 FROM snapshots.counterparties_snapshot
                 WHERE dbt_valid_to IS NULL
             """
-            counterparties = {}
+            counterparties_by_id = {}
+            counterparties_by_name = {}
             for row in self.bq_client.query(counterparties_query).result():
-                counterparties[row.counterparty_id] = dict(row)
-                # Also index by name for lookup flexibility
-                counterparties[row.counterparty_name] = dict(row)
+                row_dict = dict(row)
+                counterparties_by_id[row.counterparty_id] = row_dict
+                # Only add to name lookup if name doesn't already exist
+                # (first one wins, prevents silent overwrites)
+                if row.counterparty_name and row.counterparty_name not in counterparties_by_name:
+                    counterparties_by_name[row.counterparty_name] = row_dict
             
             # Refresh instruments
             instruments_query = """
@@ -144,14 +152,15 @@ class RegulatoryReporter:
             # Atomic swap
             with self.cache._lock:
                 self.cache.traders = traders
-                self.cache.counterparties = counterparties
+                self.cache.counterparties_by_id = counterparties_by_id
+                self.cache.counterparties_by_name = counterparties_by_name
                 self.cache.instruments = instruments
                 self.cache.books = books
                 self.cache.last_refresh = datetime.now(timezone.utc)
             
             stats = {
                 "traders": len(traders),
-                "counterparties": len(counterparties) // 2,  # Divided by 2 due to dual indexing
+                "counterparties": len(counterparties_by_id),
                 "instruments": len(instruments),
                 "books": len(books),
             }
@@ -235,12 +244,21 @@ class RegulatoryReporter:
         )
     
     def get_counterparty(self, counterparty_id: str) -> dict | None:
-        """Get counterparty reference data with cache-aside fallback."""
+        """Get counterparty reference data by ID with cache-aside fallback."""
         return self._lookup_with_fallback(
-            self.cache.counterparties,
+            self.cache.counterparties_by_id,
             counterparty_id,
             "snapshots.counterparties_snapshot",
             "counterparty_id",
+        )
+    
+    def get_counterparty_by_name(self, counterparty_name: str) -> dict | None:
+        """Get counterparty reference data by name with cache-aside fallback."""
+        return self._lookup_with_fallback(
+            self.cache.counterparties_by_name,
+            counterparty_name,
+            "snapshots.counterparties_snapshot",
+            "counterparty_name",
         )
     
     def get_instrument(self, instrument_id: str) -> dict | None:
@@ -354,13 +372,17 @@ class RegulatoryReporter:
             }
     
     def _generate_event_id(self, event: dict) -> str:
-        """Generate deterministic event ID for idempotency."""
-        # Use domain + source + source_id similar to trade_id
+        """Generate deterministic event ID for idempotency.
+        
+        Uses the same format as the dbt generate_event_id macro:
+        MD5(namespace:event:domain:source_system:source_event_id)
+        """
         domain = event.get("domain", "markets")
         source_system = event.get("source_system", "UNKNOWN")
         source_event_id = event.get("source_event_id", event.get("trade_id", ""))
         
-        id_string = f"{domain}:{source_system}:{source_event_id}"
+        # Match the dbt macro format exactly
+        id_string = f"{MARKETS_NAMESPACE}:event:{domain}:{source_system}:{source_event_id}"
         return hashlib.md5(id_string.encode()).hexdigest()
     
     def _is_duplicate(self, event_id: str) -> bool:
@@ -394,13 +416,19 @@ class RegulatoryReporter:
                 log.warning("trader_not_found", trader_id=trader_id)
                 # Don't fail - trader might be new
         
-        # Enrich counterparty
+        # Enrich counterparty - try ID first, then name
         counterparty_id = event.get("counterparty_id")
+        counterparty_name = event.get("counterparty_name")
+        counterparty = None
+        
         if counterparty_id:
             counterparty = self.get_counterparty(counterparty_id)
-            if counterparty:
-                enriched["counterparty_name"] = counterparty.get("counterparty_name")
-                enriched["counterparty_lei"] = counterparty.get("lei")
+        elif counterparty_name:
+            counterparty = self.get_counterparty_by_name(counterparty_name)
+        
+        if counterparty:
+            enriched["counterparty_name"] = counterparty.get("counterparty_name")
+            enriched["counterparty_lei"] = counterparty.get("lei")
         
         # Enrich instrument
         instrument_id = event.get("instrument_id")
@@ -467,7 +495,7 @@ class RegulatoryReporter:
                 "refresh_in_progress": self.cache.refresh_in_progress,
                 "counts": {
                     "traders": len(self.cache.traders),
-                    "counterparties": len(self.cache.counterparties) // 2,
+                    "counterparties": len(self.cache.counterparties_by_id),
                     "instruments": len(self.cache.instruments),
                     "books": len(self.cache.books),
                 },

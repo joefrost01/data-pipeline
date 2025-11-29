@@ -343,7 +343,7 @@ A narrative flow of how a trade moves through the system:
 
 3. **11:01** — dbt build starts. External table `raw.murex_trades` reads the new Parquet file. Staging model `stg_murex_trades` applies type casting and basic filtering
 
-4. **11:02** — Curation model `trades_enriched` joins to dimension snapshots, generates deterministic `trade_id` using UUID5
+4. **11:02** — Curation model `trades_enriched` joins to dimension snapshots, generates deterministic `trade_id` using MD5 hash
 
 5. **11:03** — Consumer model `surveillance_extract` unions all trade sources, applies final business rules
 
@@ -361,20 +361,29 @@ A narrative flow of how a trade moves through the system:
 
 ### Trade Identity Contract
 
-- `trade_id` is a **deterministic UUID** generated at the curation layer
+- `trade_id` is a **deterministic 32-character hex string** generated at the curation layer
 - Generated per **logical trade**, persisted forever
 - **Not regenerated** on amendments — same source trade = same trade_id
 - Source identity retained as `source_trade_id` and `source_system`
 
-### Deterministic UUID Generation
+### Deterministic ID Generation
+
+We use MD5 hashing (not UUID5) for simplicity and BigQuery compatibility:
 
 ```
-trade_id = UUID5(namespace=SURVEILLANCE_NAMESPACE, name="{domain}:{source_system}:{source_trade_id}")
+trade_id = MD5("{namespace}:{domain}:{source_system}:{source_trade_id}")
 ```
 
-This ensures idempotent processing — reprocessing the same source data produces identical trade IDs.
+This produces a 32-character hex string that is:
+- **Deterministic** — same inputs always produce same output
+- **Collision-resistant** — different inputs produce different outputs
+- **Efficient** — native BigQuery function, no UDF required
 
-**CI Validation:** The namespace UUID is linted in CI. A test verifies `generate_trade_id("markets", "MUREX", "TRD-12345")` always returns the same value.
+**Note on UUID5:** UUID5 uses SHA-1 with specific byte formatting. If you need to generate IDs
+in Python that match the dbt macro, use `hashlib.md5()`, not `uuid.uuid5()`. See 
+[`docs/identity.md`](docs/identity.md) for Python examples.
+
+**CI Validation:** The namespace is linted in CI. A test verifies `generate_trade_id("markets", "MUREX", "TRD-12345")` always returns the same value.
 
 ---
 
