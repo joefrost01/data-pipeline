@@ -7,6 +7,9 @@
 /*
     Staging model for Venue A trades.
     Maps venue-specific field names to canonical schema.
+    
+    NOTE: Venue A uses 'B'/'S' for side values. We normalise these to 'BUY'/'SELL'
+    to match the canonical schema used by all other sources.
 */
 
 select
@@ -16,7 +19,14 @@ select
     cast(null as string) as counterparty_name,  -- Venue A doesn't provide
     cast(trader as string) as trader_id,
     cast(symbol as string) as instrument_id,
-    upper(cast(side as string)) as side,
+    -- Normalise side: Venue A uses B/S, we use BUY/SELL
+    case upper(cast(side as string))
+        when 'B' then 'BUY'
+        when 'BUY' then 'BUY'
+        when 'S' then 'SELL'
+        when 'SELL' then 'SELL'
+        else upper(cast(side as string))  -- Pass through unknown values for visibility
+    end as side,
     cast(qty as int64) as quantity,
     cast(px as numeric) as price,
     cast(null as string) as book_id,  -- Enriched later from trader mapping
@@ -26,5 +36,5 @@ from {{ source('raw', 'venue_a_trades') }}
 
 where exec_id is not null
   and exec_timestamp is not null
-  and side in ('BUY', 'SELL', 'B', 'S')
+  and upper(side) in ('BUY', 'SELL', 'B', 'S')
   and qty > 0

@@ -20,13 +20,23 @@ We need a single `trade_id` that:
 
 ## The Solution
 
-We generate a deterministic UUID using a hash of the source identity:
+We generate a deterministic identifier using an MD5 hash of the source identity:
 
 ```
-trade_id = MD5(namespace + domain + source_system + source_trade_id)
+trade_id = MD5(namespace:domain:source_system:source_trade_id)
 ```
 
-This is implemented in the `generate_trade_id` macro:
+This produces a 32-character hex string that is consistent across runs.
+
+> **Note:** This is MD5, not UUID5. We use MD5 for simplicity and performance in BigQuery. 
+> UUID5 uses SHA-1 with specific byte formatting — if you need true UUID5 for cross-system 
+> compatibility (e.g., with external systems using Python's `uuid.uuid5()`), the outputs 
+> will differ. For internal use within this pipeline, MD5 provides identical deterministic 
+> properties.
+
+### Implementation
+
+The `generate_trade_id` macro in dbt:
 
 ```sql
 {{ generate_trade_id("'markets'", "source_system", "source_trade_id") }}
@@ -97,7 +107,7 @@ The namespace is validated in CI:
 # .github/workflows/ci.yml
 - name: Check namespace unchanged
   run: |
-    CURRENT=$(grep 'markets_namespace' dbt_project.yml | cut -d"'" -f2)
+    CURRENT=$(grep 'markets_namespace' dbt_project/dbt_project.yml | cut -d"'" -f2)
     EXPECTED="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     if [ "$CURRENT" != "$EXPECTED" ]; then
       echo "ERROR: Namespace UUID has changed!"
@@ -244,6 +254,28 @@ kubectl create job --from=cronjob/pipeline run-2 -n surveillance
 # Verify count unchanged
 bq query "SELECT COUNT(*) FROM curation.trades_enriched WHERE source_system = 'TEST'"
 ```
+
+## Python Compatibility Note
+
+If you need to generate the same IDs in Python (e.g., for testing or the regulatory reporter), use:
+
+```python
+import hashlib
+
+MARKETS_NAMESPACE = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
+def generate_trade_id(domain: str, source_system: str, source_trade_id: str) -> str:
+    """Generate deterministic trade ID matching the dbt macro."""
+    id_string = f"{MARKETS_NAMESPACE}:{domain}:{source_system}:{source_trade_id}"
+    return hashlib.md5(id_string.encode()).hexdigest()
+
+# Example
+trade_id = generate_trade_id("markets", "MUREX", "TRD-12345")
+# Returns same value as the dbt macro
+```
+
+> **Important:** This differs from `uuid.uuid5()`. If you have external systems using 
+> UUID5, you'll need a mapping layer or to align on one approach.
 
 ## Summary
 

@@ -2,6 +2,7 @@
 
 import time
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -29,18 +30,18 @@ class MetricsClient:
             self._token = token_path.read_text().strip()
             return self._token
         
-        log.warning("dynatrace_token_not_found", path=str(token_path))
+        log.debug("dynatrace_token_not_found", path=str(token_path))
         return None
     
-    def increment(self, metric: str, value: int = 1, dimensions: dict | None = None) -> None:
+    def increment(self, metric: str, value: int = 1, dimensions: dict[str, Any] | None = None) -> None:
         """Increment a counter metric."""
         self._record(metric, value, "count", dimensions)
     
-    def gauge(self, metric: str, value: float, dimensions: dict | None = None) -> None:
+    def gauge(self, metric: str, value: float, dimensions: dict[str, Any] | None = None) -> None:
         """Record a gauge metric."""
         self._record(metric, value, "gauge", dimensions)
     
-    def timing(self, metric: str, value: float, dimensions: dict | None = None) -> None:
+    def timing(self, metric: str, value: float, dimensions: dict[str, Any] | None = None) -> None:
         """Record a timing metric in seconds."""
         self._record(metric, value, "gauge", dimensions)
     
@@ -53,7 +54,7 @@ class MetricsClient:
         metric: str,
         value: float,
         metric_type: str,
-        dimensions: dict | None = None,
+        dimensions: dict[str, Any] | None = None,
     ) -> None:
         """Record a metric to the buffer."""
         dims = {"env": self.config.env}
@@ -73,7 +74,7 @@ class MetricsClient:
         
         token = self._get_token()
         if not token or not self.config.dynatrace_endpoint:
-            log.warning("metrics_flush_skipped", reason="no endpoint or token configured")
+            log.debug("metrics_flush_skipped", reason="no endpoint or token configured")
             self._buffer.clear()
             return
         
@@ -101,10 +102,13 @@ class MetricsClient:
                     body=response.text[:500],
                 )
         except Exception as e:
-            log.exception("metrics_flush_error", error=str(e))
+            log.warning("metrics_flush_error", error=str(e))
         finally:
             self._buffer.clear()
     
     def __del__(self) -> None:
         """Flush on destruction."""
-        self.flush()
+        try:
+            self.flush()
+        except Exception:
+            pass  # Don't raise in destructor

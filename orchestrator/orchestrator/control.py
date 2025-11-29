@@ -1,6 +1,7 @@
 """Write to BigQuery control tables."""
 
 from datetime import datetime, timezone
+from typing import Any
 
 import structlog
 from google.cloud import bigquery
@@ -104,15 +105,26 @@ class ControlTableWriter:
         
         self._insert_row(f"{self.dataset}.source_completeness", row)
     
-    def _insert_row(self, table_id: str, row: dict) -> None:
+    def _insert_row(self, table_id: str, row: dict[str, Any]) -> None:
         """Insert a single row to BigQuery."""
-        errors = self.client.insert_rows_json(table_id, [row])
+        # Filter out None values for cleaner inserts
+        row = {k: v for k, v in row.items() if v is not None}
         
-        if errors:
+        try:
+            errors = self.client.insert_rows_json(table_id, [row])
+            
+            if errors:
+                log.error(
+                    "bigquery_insert_failed",
+                    table=table_id,
+                    errors=errors,
+                )
+            else:
+                log.debug("control_row_inserted", table=table_id)
+        except Exception as e:
+            # Log but don't fail the pipeline for control table issues
             log.error(
-                "bigquery_insert_failed",
+                "bigquery_insert_exception",
                 table=table_id,
-                errors=errors,
+                error=str(e),
             )
-        else:
-            log.debug("control_row_inserted", table=table_id)

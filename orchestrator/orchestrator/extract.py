@@ -37,9 +37,11 @@ class ExtractGenerator:
         if self.config.extract_format == "avro":
             extension = "avro"
             destination_format = bigquery.DestinationFormat.AVRO
+            compression = None
         else:
             extension = "jsonl.gz"
             destination_format = bigquery.DestinationFormat.NEWLINE_DELIMITED_JSON
+            compression = bigquery.Compression.GZIP
         
         output_path = (
             f"gs://{self.config.extracts_bucket}/"
@@ -63,21 +65,15 @@ class ExtractGenerator:
             output_path=output_path,
         )
         
-        # Extract to GCS
+        # Create temp table from query, then extract
+        # (bq extract only works on tables, not queries)
+        temp_table = f"{self.config.project_id}.control._extract_temp_{today.isoformat().replace('-', '')}"
+        
         extract_query = f"""
             SELECT *
             FROM consumer.surveillance_extract
             WHERE trade_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {self.config.extract_window_days} DAY)
         """
-        
-        job_config = bigquery.ExtractJobConfig(
-            destination_format=destination_format,
-            compression=bigquery.Compression.GZIP if extension.endswith(".gz") else None,
-        )
-        
-        # Create temp table from query, then extract
-        # (bq extract only works on tables, not queries)
-        temp_table = f"{self.config.project_id}.control._extract_temp_{today.isoformat().replace('-', '')}"
         
         query_job = self.bq_client.query(
             extract_query,
@@ -86,6 +82,11 @@ class ExtractGenerator:
         query_job.result()  # Wait for query
         
         # Extract temp table to GCS
+        job_config = bigquery.ExtractJobConfig(
+            destination_format=destination_format,
+            compression=compression,
+        )
+        
         extract_job = self.bq_client.extract_table(
             temp_table,
             output_path,

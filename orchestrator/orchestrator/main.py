@@ -9,7 +9,6 @@ Runs hourly via GKE CronJob. Executes the batch pipeline:
 5. Push metrics
 """
 
-import os
 import sys
 from datetime import datetime, timezone
 
@@ -29,7 +28,8 @@ log = structlog.get_logger()
 def main() -> int:
     """Main orchestrator entry point."""
     config = Config.from_env()
-    run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    run_start_time = datetime.now(timezone.utc)
+    run_id = f"run_{run_start_time.strftime('%Y%m%d_%H%M%S')}"
     
     log.info("pipeline_started", run_id=run_id, env=config.env)
     
@@ -59,20 +59,27 @@ def main() -> int:
         dbt_result = dbt.run()
         
         if not dbt_result.success:
-            log.error("dbt_build_failed", errors=dbt_result.errors)
+            log.error("dbt_build_failed", errors=dbt_result.errors[:5])
             metrics.increment("surveillance.pipeline.dbt_failures")
             # Continue to archive even if dbt fails - don't reprocess same files
         
         metrics.gauge("surveillance.rows.processed", dbt_result.rows_affected)
+        metrics.gauge("surveillance.models.run", dbt_result.models_run)
+        metrics.gauge("surveillance.models.failed", dbt_result.models_failed)
+        metrics.gauge("surveillance.tests.passed", dbt_result.tests_passed)
+        metrics.gauge("surveillance.tests.failed", dbt_result.tests_failed)
         
         # Step 3: Archive processed files
+        # Use validation run_start_time to only archive files that were
+        # validated before this run started (prevents race condition)
         log.info("step_started", step="archive")
-        archiver = Archiver(config)
+        archiver = Archiver(config, validation_result.run_start_time)
         archive_result = archiver.run()
         
         log.info(
             "archive_complete",
             files_archived=archive_result.files_moved,
+            files_skipped=archive_result.files_skipped,
             destination=archive_result.archive_path,
         )
         
@@ -90,19 +97,42 @@ def main() -> int:
                 size_bytes=extract_result.size_bytes,
             )
             metrics.gauge("surveillance.extract.rows", extract_result.row_count)
+            metrics.gauge("surveillance.extract.size_bytes", extract_result.size_bytes)
         else:
-            log.info("extract_skipped", reason=f"not extract hour (current={current_hour})")
+            log.info(
+                "extract_skipped",
+                reason=f"not extract hour (current={current_hour}, expected={config.extract_hour})",
+            )
         
         # Step 5: Final metrics
         metrics.increment("surveillance.pipeline.runs")
-        metrics.timing("surveillance.pipeline.duration_seconds", metrics.elapsed())
         
-        log.info("pipeline_complete", run_id=run_id, duration_seconds=metrics.elapsed())
-        return 0
+        elapsed = metrics.elapsed()
+        metrics.timing("surveillance.pipeline.duration_seconds", elapsed)
+        
+        # Determine overall success
+        pipeline_success = dbt_result.success and validation_result.files_failed == 0
+        
+        log.info(
+            "pipeline_complete",
+            run_id=run_id,
+            duration_seconds=elapsed,
+            success=pipeline_success,
+            files_validated=validation_result.files_passed,
+            files_failed=validation_result.files_failed,
+            models_run=dbt_result.models_run,
+            models_failed=dbt_result.models_failed,
+        )
+        
+        # Flush metrics before exit
+        metrics.flush()
+        
+        return 0 if pipeline_success else 1
         
     except Exception as e:
         log.exception("pipeline_failed", run_id=run_id, error=str(e))
         metrics.increment("surveillance.pipeline.failures")
+        metrics.flush()
         return 1
 
 

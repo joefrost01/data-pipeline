@@ -45,7 +45,7 @@ class Config:
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
         env = os.environ.get("ENV", "int")
-        project_id = os.environ["PROJECT_ID"]
+        project_id = os.environ.get("PROJECT_ID", f"surveillance-{env}-12345")
         
         return cls(
             env=env,

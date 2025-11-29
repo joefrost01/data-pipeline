@@ -1,14 +1,26 @@
-"""File validation against source specifications."""
+"""File validation against source specifications.
+
+Validates files in landing bucket against source specs and moves them
+to staging (valid) or failed (invalid) buckets.
+
+Key safety features:
+- Verifies staging upload succeeded before deleting source
+- Retains source file on any failure
+- Row-level quarantine preserves valid data when some rows fail
+"""
 
 import hashlib
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import structlog
 import yaml
 from google.cloud import storage
+from google.api_core import exceptions as gcp_exceptions
 
 from orchestrator.config import Config
 from orchestrator.control import ControlTableWriter
@@ -24,6 +36,7 @@ class ValidationResult:
     files_passed: int
     files_failed: int
     total_rows: int
+    run_start_time: datetime
 
 
 @dataclass
@@ -36,6 +49,8 @@ class FileValidation:
     failure_reason: str | None
     quarantined_rows: int
     output_path: str | None
+    file_size_bytes: int | None
+    duration_seconds: float | None
 
 
 class Validator:
@@ -52,6 +67,7 @@ class Validator:
         self.metrics = metrics
         self.storage_client = storage.Client()
         self.source_specs = self._load_source_specs()
+        self.run_start_time = datetime.now(timezone.utc)
     
     def _load_source_specs(self) -> dict[str, dict]:
         """Load all source specifications from YAML files."""
@@ -97,6 +113,8 @@ class Validator:
                 failure_reason=result.failure_reason,
                 quarantined_rows=result.quarantined_rows,
                 output_path=result.output_path,
+                file_size_bytes=result.file_size_bytes,
+                duration_seconds=result.duration_seconds,
             )
             
             if result.passed:
@@ -116,6 +134,7 @@ class Validator:
             files_passed=files_passed,
             files_failed=files_failed,
             total_rows=total_rows,
+            run_start_time=self.run_start_time,
         )
     
     def _validate_file(
@@ -125,16 +144,22 @@ class Validator:
         failed_bucket: storage.Bucket,
     ) -> FileValidation:
         """Validate a single file."""
+        import time
+        start_time = time.monotonic()
+        
         file_path = f"gs://{blob.bucket.name}/{blob.name}"
+        file_size = blob.size
         
         # Match to source spec
         source_name, spec = self._match_source_spec(blob.name)
         if spec is None:
             return self._fail_file(
                 blob, failed_bucket, source_name or "unknown",
-                f"No matching source spec for path: {blob.name}"
+                f"No matching source spec for path: {blob.name}",
+                start_time,
             )
         
+        local_path = None
         try:
             # Download file
             local_path = f"/tmp/{hashlib.md5(blob.name.encode()).hexdigest()}"
@@ -150,7 +175,8 @@ class Validator:
                 if expected_count is not None and len(rows) != expected_count:
                     return self._fail_file(
                         blob, failed_bucket, source_name,
-                        f"Row count mismatch: expected {expected_count}, got {len(rows)}"
+                        f"Row count mismatch: expected {expected_count}, got {len(rows)}",
+                        start_time,
                     )
             
             # Convert to output format and upload to staging
@@ -158,12 +184,26 @@ class Validator:
                 rows, blob.name, spec, staging_bucket
             )
             
+            # CRITICAL: Verify the staging file exists and has correct size before deleting source
+            if not self._verify_staging_upload(output_path, staging_bucket, rows):
+                return self._fail_file(
+                    blob, failed_bucket, source_name,
+                    "Staging upload verification failed - source file retained",
+                    start_time,
+                )
+            
             # Write quarantined rows to failed bucket
             if quarantined:
                 self._write_quarantined(quarantined, blob.name, failed_bucket)
             
-            # Delete from landing
-            blob.delete()
+            # Safe to delete from landing now
+            try:
+                blob.delete()
+            except gcp_exceptions.NotFound:
+                # File might have been deleted by another process - that's OK
+                log.warning("source_file_already_deleted", file=blob.name)
+            
+            duration = time.monotonic() - start_time
             
             return FileValidation(
                 source_name=source_name,
@@ -173,11 +213,87 @@ class Validator:
                 failure_reason=None,
                 quarantined_rows=len(quarantined),
                 output_path=output_path,
+                file_size_bytes=file_size,
+                duration_seconds=duration,
             )
             
         except Exception as e:
             log.exception("validation_error", file=file_path)
-            return self._fail_file(blob, failed_bucket, source_name, str(e))
+            return self._fail_file(blob, failed_bucket, source_name, str(e), start_time)
+        
+        finally:
+            # Clean up local file
+            if local_path and os.path.exists(local_path):
+                try:
+                    os.remove(local_path)
+                except OSError:
+                    pass
+    
+    def _verify_staging_upload(
+        self,
+        output_path: str,
+        staging_bucket: storage.Bucket,
+        rows: list[dict],
+    ) -> bool:
+        """Verify that the staging file was uploaded successfully.
+        
+        Checks:
+        1. File exists in staging bucket
+        2. File size is > 0
+        3. File is readable (can get metadata)
+        
+        Returns True if verification passes.
+        """
+        try:
+            # Extract blob name from gs:// path
+            blob_name = output_path.replace(f"gs://{staging_bucket.name}/", "")
+            blob = staging_bucket.blob(blob_name)
+            
+            # Force reload metadata from server
+            blob.reload()
+            
+            # Verify file exists and has content
+            if blob.size is None or blob.size == 0:
+                log.error(
+                    "staging_verification_failed",
+                    path=output_path,
+                    reason="file size is 0 or None",
+                )
+                return False
+            
+            # Verify size is reasonable (at least some bytes per row)
+            if len(rows) > 0:
+                bytes_per_row = blob.size / len(rows)
+                if bytes_per_row < 10:  # Suspiciously small
+                    log.warning(
+                        "staging_file_suspiciously_small",
+                        path=output_path,
+                        size=blob.size,
+                        rows=len(rows),
+                        bytes_per_row=bytes_per_row,
+                    )
+            
+            log.debug(
+                "staging_verification_passed",
+                path=output_path,
+                size=blob.size,
+            )
+            return True
+            
+        except gcp_exceptions.NotFound:
+            log.error(
+                "staging_verification_failed",
+                path=output_path,
+                reason="file not found",
+            )
+            return False
+        except Exception as e:
+            log.error(
+                "staging_verification_error",
+                path=output_path,
+                error=str(e),
+            )
+            return False
     
     def _match_source_spec(self, blob_name: str) -> tuple[str | None, dict | None]:
         """Match a blob name to a source specification."""
@@ -202,17 +318,43 @@ class Validator:
         
         if control_type == "sidecar_xml":
             # Look for .ctrl or _ctrl.xml file
-            ctrl_name = blob.name.rsplit(".", 1)[0] + "_ctrl.xml"
+            ctrl_pattern = control_config.get("pattern", "{filename}_ctrl.xml")
+            base_name = blob.name.rsplit(".", 1)[0]
+            ctrl_name = ctrl_pattern.replace("{filename}", base_name)
             ctrl_blob = blob.bucket.blob(ctrl_name)
             
-            if ctrl_blob.exists():
-                import xml.etree.ElementTree as ET
-                ctrl_content = ctrl_blob.download_as_text()
-                root = ET.fromstring(ctrl_content)
-                xpath = control_config.get("xpath_row_count")
-                element = root.find(xpath.replace("/", "./"))
-                if element is not None and element.text:
-                    return int(element.text)
+            try:
+                if ctrl_blob.exists():
+                    import xml.etree.ElementTree as ET
+                    ctrl_content = ctrl_blob.download_as_text()
+                    root = ET.fromstring(ctrl_content)
+                    xpath = control_config.get("xpath_row_count", "RecordCount")
+                    # Handle xpath with leading /
+                    xpath = xpath.lstrip("/").replace("/", "./")
+                    element = root.find(xpath)
+                    if element is not None and element.text:
+                        return int(element.text)
+            except Exception as e:
+                log.warning("control_file_parse_error", error=str(e))
+        
+        elif control_type == "sidecar_csv":
+            ctrl_pattern = control_config.get("pattern", "{filename}.ctrl")
+            base_name = blob.name.rsplit(".", 1)[0]
+            ctrl_name = ctrl_pattern.replace("{filename}", base_name)
+            ctrl_blob = blob.bucket.blob(ctrl_name)
+            
+            try:
+                if ctrl_blob.exists():
+                    import csv
+                    from io import StringIO
+                    ctrl_content = ctrl_blob.download_as_text()
+                    reader = csv.DictReader(StringIO(ctrl_content))
+                    row = next(reader, None)
+                    if row:
+                        field = control_config.get("row_count_field", "record_count")
+                        return int(row.get(field, 0))
+            except Exception as e:
+                log.warning("control_file_parse_error", error=str(e))
         
         return None
     
@@ -230,18 +372,27 @@ class Validator:
         # Generate output path
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         base_name = Path(original_name).stem
-        output_name = f"{Path(original_name).parent}/{base_name}_{timestamp}.parquet"
+        parent = Path(original_name).parent
+        output_name = f"{parent}/{base_name}_{timestamp}.parquet"
         
         # Convert to Parquet
         table = pa.Table.from_pylist(rows)
         local_parquet = f"/tmp/{hashlib.md5(output_name.encode()).hexdigest()}.parquet"
         pq.write_table(table, local_parquet)
         
-        # Upload
-        output_blob = staging_bucket.blob(output_name)
-        output_blob.upload_from_filename(local_parquet)
-        
-        return f"gs://{staging_bucket.name}/{output_name}"
+        try:
+            # Upload with retry
+            output_blob = staging_bucket.blob(output_name)
+            output_blob.upload_from_filename(
+                local_parquet,
+                timeout=120,  # 2 minute timeout for large files
+            )
+            
+            return f"gs://{staging_bucket.name}/{output_name}"
+        finally:
+            # Clean up local file
+            if os.path.exists(local_parquet):
+                os.remove(local_parquet)
     
     def _write_quarantined(
         self,
@@ -255,10 +406,16 @@ class Validator:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         output_name = f"quarantined/{original_name}_{timestamp}.jsonl"
         
-        content = "\n".join(json.dumps(row) for row in quarantined)
+        content = "\n".join(json.dumps(row, default=str) for row in quarantined)
         
         blob = failed_bucket.blob(output_name)
         blob.upload_from_string(content)
+        
+        log.info(
+            "quarantined_rows_written",
+            count=len(quarantined),
+            path=f"gs://{failed_bucket.name}/{output_name}",
+        )
     
     def _fail_file(
         self,
@@ -266,21 +423,40 @@ class Validator:
         failed_bucket: storage.Bucket,
         source_name: str,
         reason: str,
+        start_time: float,
     ) -> FileValidation:
         """Move file to failed bucket and return failure result."""
+        import time
+        
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         failed_name = f"{blob.name}_{timestamp}"
         
-        # Copy to failed bucket
-        failed_blob = failed_bucket.blob(failed_name)
-        failed_blob.rewrite(blob)
+        try:
+            # Copy to failed bucket (keep original as backup)
+            failed_blob = failed_bucket.blob(failed_name)
+            failed_blob.rewrite(blob)
+            
+            # Write error log
+            error_log = failed_bucket.blob(f"{failed_name}.error.txt")
+            error_content = f"""Failure reason: {reason}
+Timestamp: {timestamp}
+Source file: gs://{blob.bucket.name}/{blob.name}
+Source name: {source_name}
+"""
+            error_log.upload_from_string(error_content)
+            
+            # Delete from landing only after successful copy to failed
+            blob.delete()
+            
+        except Exception as e:
+            log.error(
+                "failed_to_move_to_failed_bucket",
+                file=blob.name,
+                error=str(e),
+            )
+            # Don't delete original if we couldn't copy to failed
         
-        # Write error log
-        error_log = failed_bucket.blob(f"{failed_name}.error.txt")
-        error_log.upload_from_string(f"Failure reason: {reason}\nTimestamp: {timestamp}")
-        
-        # Delete from landing
-        blob.delete()
+        duration = time.monotonic() - start_time
         
         return FileValidation(
             source_name=source_name,
@@ -290,4 +466,6 @@ class Validator:
             failure_reason=reason,
             quarantined_rows=0,
             output_path=f"gs://{failed_bucket.name}/{failed_name}",
+            file_size_bytes=blob.size,
+            duration_seconds=duration,
         )

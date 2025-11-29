@@ -12,9 +12,14 @@ terraform {
     }
   }
 
+  # State configuration with locking
+  # GCS backend automatically uses object locking for state
   backend "gcs" {
     bucket = "surveillance-terraform-state"
     prefix = "int"
+    
+    # State locking is automatic with GCS backend
+    # No additional configuration needed
   }
 }
 
@@ -37,5 +42,30 @@ locals {
     environment = local.env
     application = "surveillance-pipeline"
     managed_by  = "terraform"
+    cost_centre = "data-engineering"
   }
+  
+  # Construct partner service account if not explicitly provided
+  surveillance_partner_sa = (
+    var.surveillance_partner_service_account != "" 
+    ? var.surveillance_partner_service_account 
+    : "surveillance-reader@${var.surveillance_partner_project}.iam.gserviceaccount.com"
+  )
+}
+
+# Enable required APIs
+resource "google_project_service" "required_apis" {
+  for_each = toset([
+    "bigquery.googleapis.com",
+    "bigquerystorage.googleapis.com",
+    "storage.googleapis.com",
+    "pubsub.googleapis.com",
+    "container.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+  ])
+  
+  service            = each.value
+  disable_on_destroy = false
 }
