@@ -333,7 +333,7 @@ ORDER BY date DESC
 
 ## Reference
 
-- [DESIGN.md](../DESIGN.md) — Architecture and failure modes
+- [DESIGN.md](design.md) — Architecture and failure modes
 - [GCP Console](https://console.cloud.google.com/home/dashboard?project=markets-int-12345)
 - [Dynatrace Dashboard](https://your-tenant.live.dynatrace.com)
 - [ServiceNow](https://company.service-now.com)

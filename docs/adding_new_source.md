@@ -419,6 +419,6 @@ qualify row_number() over (
 
 ## Reference
 
-- [DESIGN.md](../DESIGN.md) — Architecture overview
+- [DESIGN.md](design.md) — Architecture overview
 - [source_specs/trading/murex_trades.yaml](../source_specs/trading/murex_trades.yaml) — Complete example
 - [Support Runbook](support_runbook.md) — Operational procedures

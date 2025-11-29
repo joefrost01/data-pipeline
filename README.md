@@ -50,6 +50,6 @@ See `source_specs/trading/murex_trades.yaml` for a complete example.
 
 ## Documentation
 
-- [DESIGN.md](DESIGN.md) — Full architecture, design decisions, failure modes
+- [DESIGN.md](docs/design.md) — Full architecture, design decisions, failure modes
 - [docs/support_runbook.md](docs/support_runbook.md) — Operational procedures
 - [docs/adding_new_source.md](docs/adding_new_source.md) — Detailed onboarding guide
