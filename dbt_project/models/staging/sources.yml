@@ -1,0 +1,127 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw data from external tables and streaming ingestion
+    database: "{{ target.project }}"
+    schema: raw
+    
+    tables:
+      - name: murex_trades
+        description: Trade confirmations from Murex (external table over Parquet)
+        external:
+          location: "gs://{{ target.project }}-staging/murex/*.parquet"
+          options:
+            format: PARQUET
+        columns:
+          - name: trade_id
+            description: Murex native trade identifier
+          - name: trade_time
+            description: Execution timestamp
+          - name: counterparty
+            description: Counterparty name
+          - name: trader_id
+            description: Trader identifier
+          - name: instrument
+            description: Instrument identifier
+          - name: side
+            description: BUY or SELL
+          - name: quantity
+            description: Trade quantity
+          - name: price
+            description: Execution price
+          - name: book_id
+            description: Trading book
+      
+      - name: venue_a_trades
+        description: Trades from Venue A (external table over Parquet)
+        external:
+          location: "gs://{{ target.project }}-staging/venue_a/*.parquet"
+          options:
+            format: PARQUET
+        columns:
+          - name: exec_id
+            description: Venue execution ID
+          - name: exec_timestamp
+            description: Execution timestamp
+          - name: client_order_id
+            description: Client order reference
+          - name: symbol
+            description: Instrument symbol
+          - name: side
+            description: BUY or SELL
+          - name: qty
+            description: Executed quantity
+          - name: px
+            description: Execution price
+          - name: trader
+            description: Trader ID
+      
+      - name: rfq_stream
+        description: Streaming RFQ events from Kafka via Pub/Sub
+        columns:
+          - name: rfq_id
+            description: Unique RFQ identifier
+          - name: rfq_timestamp
+            description: RFQ creation time
+          - name: trader_id
+            description: Trader identifier
+          - name: instrument
+            description: Instrument identifier
+          - name: side
+            description: BUY or SELL
+          - name: quantity
+            description: Requested quantity
+          - name: price
+            description: Quoted price
+          - name: counterparty_id
+            description: Counterparty identifier
+          - name: source_sequence_id
+            description: Sequence ID for gap detection
+          - name: _kafka_partition
+            description: Source Kafka partition
+          - name: _kafka_offset
+            description: Source Kafka offset
+          - name: _ingestion_time
+            description: BigQuery ingestion timestamp
+
+  - name: reference
+    description: Reference data from external tables
+    database: "{{ target.project }}"
+    schema: raw
+    
+    tables:
+      - name: traders
+        description: Trader reference data
+        columns:
+          - name: trader_id
+          - name: trader_name
+          - name: desk_id
+          - name: status
+          - name: compliance_officer
+      
+      - name: counterparties
+        description: Counterparty reference data
+        columns:
+          - name: counterparty_id
+          - name: counterparty_name
+          - name: lei
+          - name: country
+          - name: status
+      
+      - name: instruments
+        description: Instrument reference data
+        columns:
+          - name: instrument_id
+          - name: symbol
+          - name: isin
+          - name: asset_class
+          - name: currency
+      
+      - name: books
+        description: Trading book hierarchy
+        columns:
+          - name: book_id
+          - name: book_name
+          - name: desk_id
+          - name: legal_entity

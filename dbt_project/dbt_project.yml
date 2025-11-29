@@ -1,0 +1,63 @@
+name: 'markets_pipeline'
+version: '0.1.0'
+config-version: 2
+
+profile: 'markets'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # Deterministic UUID namespace for trade_id generation
+  markets_namespace: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
+models:
+  markets_pipeline:
+    +persist_docs:
+      relation: true
+      columns: true
+    
+    staging:
+      +schema: staging
+      +materialized: view
+      +tags: ['staging']
+    
+    curation:
+      +schema: curation
+      +materialized: incremental
+      +tags: ['curation']
+      +incremental_strategy: merge
+      +on_schema_change: sync_all_columns
+    
+    consumer:
+      +schema: consumer
+      +materialized: table
+      +tags: ['consumer']
+    
+    dimensions:
+      +schema: curation
+      +materialized: table
+      +tags: ['dimensions']
+    
+    control:
+      +schema: control
+      +materialized: table
+      +tags: ['control']
+
+snapshots:
+  markets_pipeline:
+    +target_schema: snapshots
+    +strategy: check
+    +invalidate_hard_deletes: true
+
+seeds:
+  markets_pipeline:
+    +schema: seeds

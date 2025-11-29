@@ -1,0 +1,6 @@
+project_id                   = "surveillance-int-12345"
+region                       = "europe-west2"
+zone                         = "europe-west2-a"
+surveillance_partner_project = "partner-surveillance-int"
+kafka_brokers                = "kafka-int.internal:9092"
+regulator_api_url            = "https://api.regulator-uat.example.com/v1/submit"

@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: control
+    description: Pipeline control tables (written by orchestrator)
+    database: "{{ target.project }}"
+    schema: control
+    
+    tables:
+      - name: validation_runs
+        description: Audit log of file validation attempts
+        columns:
+          - name: run_id
+          - name: run_timestamp
+          - name: source_name
+          - name: file_path
+          - name: row_count
+          - name: passed
+          - name: failure_reason
+      
+      - name: dbt_runs
+        description: Audit log of dbt model executions
+      
+      - name: regulatory_submissions
+        description: Audit trail of regulatory report submissions

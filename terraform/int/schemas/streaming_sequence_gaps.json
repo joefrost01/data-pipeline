@@ -1,0 +1,62 @@
+[
+  {
+    "name": "gap_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for this gap"
+  },
+  {
+    "name": "detected_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the gap was detected"
+  },
+  {
+    "name": "source_system",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Source system identifier"
+  },
+  {
+    "name": "partition_id",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Kafka partition where gap occurred"
+  },
+  {
+    "name": "gap_start",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "First missing sequence ID"
+  },
+  {
+    "name": "gap_end",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Last missing sequence ID"
+  },
+  {
+    "name": "gap_size",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Number of missing messages"
+  },
+  {
+    "name": "severity",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "LOW, MEDIUM, HIGH, CRITICAL"
+  },
+  {
+    "name": "resolved_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When gap was resolved (backfilled or acknowledged)"
+  },
+  {
+    "name": "resolution_type",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "BACKFILLED, ACKNOWLEDGED, UPSTREAM_CONFIRMED_MISSING"
+  }
+]

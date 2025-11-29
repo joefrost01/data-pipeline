@@ -1,0 +1,74 @@
+[
+  {
+    "name": "run_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for this validation run"
+  },
+  {
+    "name": "run_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When validation occurred"
+  },
+  {
+    "name": "source_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Source system identifier from source spec"
+  },
+  {
+    "name": "file_path",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "GCS path to the validated file"
+  },
+  {
+    "name": "file_size_bytes",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Size of the file in bytes"
+  },
+  {
+    "name": "row_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of rows in file"
+  },
+  {
+    "name": "expected_row_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Row count from control file if present"
+  },
+  {
+    "name": "passed",
+    "type": "BOOL",
+    "mode": "REQUIRED",
+    "description": "Whether validation passed"
+  },
+  {
+    "name": "failure_reason",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Reason for failure if passed=false"
+  },
+  {
+    "name": "quarantined_rows",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of rows quarantined due to row-level failures"
+  },
+  {
+    "name": "output_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path to staging or failed location"
+  },
+  {
+    "name": "duration_seconds",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Time taken to validate"
+  }
+]

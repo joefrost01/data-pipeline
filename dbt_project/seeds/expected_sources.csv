@@ -1,0 +1,9 @@
+source_name,expected_by,min_files_per_day,owner
+murex_trades,06:00,1,trading-systems@company.com
+venue_a_trades,07:00,1,venue-integration@company.com
+venue_b_trades,07:00,1,venue-integration@company.com
+bloomberg_rfqs,08:00,1,market-data@company.com
+traders,05:00,1,reference-data@company.com
+counterparties,05:00,1,reference-data@company.com
+instruments,05:00,1,reference-data@company.com
+books,05:00,1,reference-data@company.com

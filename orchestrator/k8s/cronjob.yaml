@@ -1,0 +1,125 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: surveillance-pipeline
+  namespace: surveillance
+  labels:
+    app: surveillance-pipeline
+    component: orchestrator
+spec:
+  schedule: "0 * * * *"  # Every hour
+  concurrencyPolicy: Forbid  # Don't run if previous still running
+  successfulJobsHistoryLimit: 24
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1  # Retry once on failure
+      activeDeadlineSeconds: 3300  # 55 minutes max
+      template:
+        metadata:
+          labels:
+            app: surveillance-pipeline
+            component: orchestrator
+        spec:
+          serviceAccountName: orchestrator
+          restartPolicy: Never
+          
+          containers:
+          - name: orchestrator
+            image: gcr.io/${PROJECT_ID}/surveillance-orchestrator:latest
+            imagePullPolicy: Always
+            
+            env:
+            - name: ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: env
+            - name: PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: project_id
+            - name: REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: region
+            - name: LANDING_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: landing_bucket
+            - name: STAGING_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: staging_bucket
+            - name: ARCHIVE_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: archive_bucket
+            - name: FAILED_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: failed_bucket
+            - name: EXTRACTS_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: extracts_bucket
+            - name: EXTRACT_HOUR
+              value: "6"
+            - name: EXTRACT_FORMAT
+              value: "jsonl"
+            - name: DYNATRACE_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: surveillance-config
+                  key: dynatrace_endpoint
+            
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                cpu: 2000m
+                memory: 4Gi
+            
+            volumeMounts:
+            - name: dynatrace-token
+              mountPath: /secrets
+              readOnly: true
+          
+          volumes:
+          - name: dynatrace-token
+            secret:
+              secretName: dynatrace-token
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: surveillance-config
+  namespace: surveillance
+data:
+  env: "int"
+  project_id: "surveillance-int-12345"
+  region: "europe-west2"
+  landing_bucket: "surveillance-int-landing"
+  staging_bucket: "surveillance-int-staging"
+  archive_bucket: "surveillance-int-archive"
+  failed_bucket: "surveillance-int-failed"
+  extracts_bucket: "surveillance-int-extracts"
+  dynatrace_endpoint: "https://your-tenant.live.dynatrace.com"
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orchestrator
+  namespace: surveillance
+  annotations:
+    iam.gke.io/gcp-service-account: surveillance-int-orchestrator@surveillance-int-12345.iam.gserviceaccount.com

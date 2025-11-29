@@ -1,0 +1,24 @@
+markets:
+  target: int
+  outputs:
+    int:
+      type: bigquery
+      method: oauth  # Uses application default credentials in GKE
+      project: markets-int-12345
+      dataset: staging  # Default dataset, overridden per model
+      location: europe-west2
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive
+      retries: 1
+    
+    prod:
+      type: bigquery
+      method: oauth
+      project: markets-prod-12345
+      dataset: staging
+      location: europe-west2
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive
+      retries: 1

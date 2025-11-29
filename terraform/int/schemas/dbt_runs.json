@@ -1,0 +1,56 @@
+[
+  {
+    "name": "run_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for this dbt run"
+  },
+  {
+    "name": "run_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When dbt run started"
+  },
+  {
+    "name": "model_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Name of the dbt model"
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Model status: success, error, skipped"
+  },
+  {
+    "name": "rows_affected",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of rows inserted/updated"
+  },
+  {
+    "name": "execution_time_seconds",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Time taken to execute model"
+  },
+  {
+    "name": "bytes_processed",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Bytes processed by BigQuery"
+  },
+  {
+    "name": "error_message",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Error message if status=error"
+  },
+  {
+    "name": "invocation_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "dbt invocation ID for this run"
+  }
+]

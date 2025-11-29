@@ -1,0 +1,62 @@
+[
+  {
+    "name": "business_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Business date for completeness check"
+  },
+  {
+    "name": "source_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Source system identifier"
+  },
+  {
+    "name": "expected_by",
+    "type": "TIME",
+    "mode": "NULLABLE",
+    "description": "Expected arrival time from source spec"
+  },
+  {
+    "name": "first_file_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When first file arrived"
+  },
+  {
+    "name": "last_file_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When last file arrived"
+  },
+  {
+    "name": "file_count",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Number of files received"
+  },
+  {
+    "name": "total_rows",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Total rows across all files"
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "COMPLETE, PARTIAL, MISSING, LATE"
+  },
+  {
+    "name": "consecutive_missing_days",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of consecutive days source has been missing"
+  },
+  {
+    "name": "checked_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When this record was created/updated"
+  }
+]

@@ -1,0 +1,68 @@
+[
+  {
+    "name": "dead_letter_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for this dead letter entry"
+  },
+  {
+    "name": "event_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Deterministic event ID"
+  },
+  {
+    "name": "event_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the original event occurred"
+  },
+  {
+    "name": "failed_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the submission was dead-lettered"
+  },
+  {
+    "name": "failure_reason",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Reason for failure"
+  },
+  {
+    "name": "retry_count",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Number of retry attempts before dead-lettering"
+  },
+  {
+    "name": "last_error",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Last error message from submission attempt"
+  },
+  {
+    "name": "event_payload",
+    "type": "JSON",
+    "mode": "REQUIRED",
+    "description": "Original event payload for manual reprocessing"
+  },
+  {
+    "name": "resolved_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When manually resolved (null if pending)"
+  },
+  {
+    "name": "resolved_by",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Who resolved this dead letter"
+  },
+  {
+    "name": "resolution_notes",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Notes on how it was resolved"
+  }
+]

@@ -1,0 +1,80 @@
+[
+  {
+    "name": "rfq_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique RFQ identifier from source"
+  },
+  {
+    "name": "rfq_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the RFQ was created"
+  },
+  {
+    "name": "trader_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Trader identifier"
+  },
+  {
+    "name": "instrument",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Instrument identifier"
+  },
+  {
+    "name": "side",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "BUY or SELL"
+  },
+  {
+    "name": "quantity",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Requested quantity"
+  },
+  {
+    "name": "price",
+    "type": "NUMERIC",
+    "mode": "NULLABLE",
+    "description": "Quoted price if available"
+  },
+  {
+    "name": "counterparty_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Counterparty identifier"
+  },
+  {
+    "name": "source_sequence_id",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Sequence ID for gap detection"
+  },
+  {
+    "name": "_kafka_partition",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Source Kafka partition"
+  },
+  {
+    "name": "_kafka_offset",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Source Kafka offset"
+  },
+  {
+    "name": "_kafka_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "Kafka message timestamp"
+  },
+  {
+    "name": "_ingestion_time",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When message was ingested to BigQuery"
+  }
+]

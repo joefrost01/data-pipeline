@@ -1,0 +1,62 @@
+[
+  {
+    "name": "submission_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for this submission"
+  },
+  {
+    "name": "event_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Deterministic event ID (unique constraint)"
+  },
+  {
+    "name": "event_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the original event occurred"
+  },
+  {
+    "name": "submitted_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When submission was sent to regulator"
+  },
+  {
+    "name": "regulator_reference",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Reference returned by regulator"
+  },
+  {
+    "name": "submission_latency_seconds",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Time from event to submission"
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "SUBMITTED, ACKNOWLEDGED, REJECTED"
+  },
+  {
+    "name": "report_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Type of regulatory report"
+  },
+  {
+    "name": "report_payload_hash",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "SHA256 hash of submitted payload"
+  },
+  {
+    "name": "retry_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of retry attempts"
+  }
+]

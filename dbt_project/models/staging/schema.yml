@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: stg_murex_trades
+    description: Cleaned Murex trade data
+    columns:
+      - name: source_trade_id
+        description: Murex native trade ID
+        tests:
+          - not_null
+      - name: source_system
+        description: Always 'MUREX'
+      - name: trade_time
+        tests:
+          - not_null
+      - name: side
+        tests:
+          - accepted_values:
+              values: ['BUY', 'SELL']
+      - name: quantity
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+
+  - name: stg_venue_a_trades
+    description: Cleaned Venue A trade data
+    columns:
+      - name: source_trade_id
+        tests:
+          - not_null
+      - name: trade_time
+        tests:
+          - not_null
+      - name: side
+        tests:
+          - accepted_values:
+              values: ['BUY', 'SELL', 'B', 'S']
+
+  - name: stg_rfqs
+    description: Deduplicated streaming RFQs
+    columns:
+      - name: rfq_id
+        description: Unique RFQ identifier (deduplicated)
+        tests:
+          - unique
+          - not_null
+      - name: rfq_timestamp
+        tests:
+          - not_null
+      - name: side
+        tests:
+          - accepted_values:
+              values: ['BUY', 'SELL']
+
+  - name: stg_traders
+    description: Trader reference data
+    columns:
+      - name: trader_id
+        tests:
+          - unique
+          - not_null
