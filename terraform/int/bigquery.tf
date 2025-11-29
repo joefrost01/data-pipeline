@@ -84,12 +84,6 @@ resource "google_bigquery_dataset" "consumer" {
     role           = "WRITER"
     user_by_email  = google_service_account.dbt.email
   }
-
-  # Surveillance partner read access - use the computed SA email
-  access {
-    role           = "READER"
-    user_by_email  = local.surveillance_partner_sa
-  }
 }
 
 resource "google_bigquery_dataset" "snapshots" {

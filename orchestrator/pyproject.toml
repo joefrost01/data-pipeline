@@ -1,7 +1,7 @@
 [project]
-name = "surveillance-orchestrator"
+name = "markets-orchestrator"
 version = "0.1.0"
-description = "Orchestrator for surveillance data pipeline"
+description = "Orchestrator for markets data pipeline"
 requires-python = ">=3.11"
 dependencies = [
     "google-cloud-storage>=2.14.0",

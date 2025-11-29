@@ -245,10 +245,10 @@ select * from test_cases where murex_id = venue_a_id
 ```bash
 # Drop same file twice, verify no duplicates
 gsutil cp test_file.csv gs://landing/murex/
-kubectl create job --from=cronjob/pipeline run-1 -n surveillance
+kubectl create job --from=cronjob/pipeline run-1 -n markets
 # Wait for completion
 gsutil cp test_file.csv gs://landing/murex/
-kubectl create job --from=cronjob/pipeline run-2 -n surveillance
+kubectl create job --from=cronjob/pipeline run-2 -n markets
 # Wait for completion
 
 # Verify count unchanged

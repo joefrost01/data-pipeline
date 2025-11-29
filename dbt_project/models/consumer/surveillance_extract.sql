@@ -11,14 +11,11 @@
 }}
 
 /*
-    Markets extract: the main output for the surveillance partner.
+    Surveillance extract: the main output for the surveillance partner.
     
     Contains 7-day rolling window of enriched trades in the format
     expected by the partner's MAR detection system.
-    
-    NOTE: This model was previously named 'surveillance_extract'.
-    The rename to 'markets_extract' aligns with the broader naming
-    convention used throughout the pipeline.
+
 */
 
 select

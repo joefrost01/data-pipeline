@@ -218,15 +218,15 @@ Complexity: Higher — real-time, requires cache, separate failure handling
 
 This platform is explicitly **not**:
 
-| Non-Goal | Rationale |
-|----------|-----------|
-| A general-purpose ETL tool | Purpose-built for surveillance; other use cases need separate pipelines |
-| A lineage/catalogue tool | Use Dataplex or similar for enterprise lineage |
-| A BI modelling layer | Surveillance extracts only; BI teams build their own marts |
+| Non-Goal | Rationale                                                             |
+|----------|-----------------------------------------------------------------------|
+| A general-purpose ETL tool | Purpose-built for Markets; other use cases need separate pipelines    |
+| A lineage/catalogue tool | Use Dataplex or similar for enterprise lineage                        |
+| A BI modelling layer | Surveillance extracts only; BI teams build their own marts            |
 | A streaming analytics engine | Batch reconciliation is the source of truth; streaming is for latency |
-| A recreation of golden sources | We ingest from golden sources; we don't replace them |
-| A long-term operational datastore | 7-day rolling window; historical archives are separate |
-| A replacement for Murex BO | Murex remains the system of record for trade lifecycle |
+| A recreation of golden sources | We ingest from golden sources; we don't replace them                  |
+| A long-term operational datastore | 7-day rolling window; historical archives are separate                |
+| A replacement for Murex BO | Murex remains the system of record for trade lifecycle                |
 
 ---
 
@@ -337,7 +337,7 @@ BigQuery streaming quotas have been reviewed against expected RFQ and event volu
 
 A narrative flow of how a trade moves through the system:
 
-1. **10:07** — Murex drops `trades_20251128_1007.xml` into `gs://surveillance-data/landing/murex/`
+1. **10:07** — Murex drops `trades_20251128_1007.xml` into `gs://markets-data/landing/murex/`
 
 2. **11:00** — Hourly CronJob fires. Validator finds the file, parses XML, checks row count against sidecar control file, converts to Parquet, moves to `staging/murex/trades_20251128_1007.parquet`
 
@@ -487,7 +487,7 @@ See [`docs/adding_new_source.md`](docs/adding_new_source.md) for detailed walkth
 ## Project Structure
 
 ```
-surveillance-pipeline/
+markets-pipeline/
 │
 ├── README.md                     # This file
 ├── pyproject.toml                # Python dependencies
@@ -526,7 +526,7 @@ surveillance-pipeline/
     └── architecture_decisions.md
 ```
 
-All business transformation logic and surveillance rules are implemented in dbt models under version control. Pipeline Python code is responsible for orchestration, validation, and movement of data only, not for implementing business rules.
+All business transformation logic and business rules are implemented in dbt models under version control. Pipeline Python code is responsible for orchestration, validation, and movement of data only, not for implementing business rules.
 
 ---
 
@@ -599,7 +599,7 @@ The validator operates on a **fail-fast per file, continue per run** basis:
 
 ### Disaster Recovery
 
-BigQuery, GCS, Pub/Sub, and Cloud Run are all multi-zone managed services; GKE clusters are deployed across multiple zones within a single region. Cross-region DR is not required for this surveillance pipeline: in the event of a regional outage, RTO and RPO are determined by the bank’s broader GCP regional failover strategy rather than this solution specifically.
+BigQuery, GCS, Pub/Sub, and Cloud Run are all multi-zone managed services; GKE clusters are deployed across multiple zones within a single region. Cross-region DR is not required for this data pipeline: in the event of a regional outage, RTO and RPO are determined by the bank’s broader GCP regional failover strategy rather than this solution specifically.
 
 ---
 
@@ -611,11 +611,11 @@ Dimensions use appropriate SCD strategies based on business requirements.
 
 Used for dimensions where historical accuracy is required:
 
-| Dimension | Rationale |
-|-----------|-----------|
-| `dim_counterparty` | Legal entity changes affect regulatory reporting |
-| `dim_book` | Book hierarchy changes affect P&L and risk |
-| `dim_trader` | Trader desk moves require historical accuracy for surveillance |
+| Dimension | Rationale                                                                  |
+|-----------|----------------------------------------------------------------------------|
+| `dim_counterparty` | Legal entity changes affect regulatory reporting                           |
+| `dim_book` | Book hierarchy changes affect P&L and risk                                 |
+| `dim_trader` | Trader desk moves require historical accuracy for things like surveillance |
 
 ### SCD Type 1 (Current State Only)
 
@@ -649,8 +649,8 @@ Daily at 06:00 UTC, the pipeline extracts a 7-day rolling window:
 
 - **Format:** Newline-delimited JSON (`.jsonl.gz`) by default
 - **Configurable:** Set `EXTRACT_FORMAT` env var to `avro` or `jsonl` as needed
-- **Destination:** `gs://surveillance-data/extracts/{date}/surveillance_extract_{date}.jsonl.gz`
-- **Transfer:** Automated transfer to surveillance partner's GCS bucket
+- **Destination:** `gs://markets-data/extracts/{date}/surveillance_extract_{date}.jsonl.gz`
+- **Transfer:** Automated transfer to surveillance partner via SFTP
 
 ---
 

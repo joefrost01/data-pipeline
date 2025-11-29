@@ -15,17 +15,6 @@ variable "zone" {
   default     = "europe-west2-a"
 }
 
-variable "surveillance_partner_project" {
-  description = "GCP project ID for surveillance partner (extract access)"
-  type        = string
-}
-
-variable "surveillance_partner_service_account" {
-  description = "Full service account email for surveillance partner reader access"
-  type        = string
-  default     = ""  # If empty, will be constructed from partner project
-}
-
 variable "kafka_brokers" {
   description = "Kafka bootstrap servers"
   type        = string

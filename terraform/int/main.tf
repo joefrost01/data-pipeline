@@ -44,13 +44,7 @@ locals {
     managed_by  = "terraform"
     cost_centre = "data-engineering"
   }
-  
-  # Construct partner service account if not explicitly provided
-  surveillance_partner_sa = (
-    var.surveillance_partner_service_account != "" 
-    ? var.surveillance_partner_service_account 
-    : "markets-reader@${var.surveillance_partner_project}.iam.gserviceaccount.com"
-  )
+
 }
 
 # Enable required APIs

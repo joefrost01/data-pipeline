@@ -95,7 +95,7 @@ Operational procedures for the Markets Data Pipeline.
 
 2. Check GKE pod logs for full stack trace:
    ```bash
-   kubectl logs -n surveillance -l app=surveillance-pipeline --since=2h | grep -A 20 "error"
+   kubectl logs -n markets -l app=markets-pipeline --since=2h | grep -A 20 "error"
    ```
 
 3. Common failures:
@@ -109,7 +109,7 @@ Operational procedures for the Markets Data Pipeline.
 
 4. To manually re-run dbt after fix:
    ```bash
-   kubectl exec -it -n surveillance deploy/surveillance-pipeline -- dbt build --select model_name+
+   kubectl exec -it -n markets deploy/markets-pipeline -- dbt build --select model_name+
    ```
 
 ---
@@ -175,8 +175,8 @@ Operational procedures for the Markets Data Pipeline.
 
 3. Check GKE streaming bridge pods:
    ```bash
-   kubectl get pods -n surveillance -l component=streaming-bridge
-   kubectl logs -n surveillance -l component=streaming-bridge --tail=100
+   kubectl get pods -n markets -l component=streaming-bridge
+   kubectl logs -n markets -l component=streaming-bridge --tail=100
    ```
 
 4. Common causes:
@@ -191,7 +191,7 @@ Operational procedures for the Markets Data Pipeline.
 
 5. To scale bridge:
    ```bash
-   kubectl scale deployment streaming-bridge -n surveillance --replicas=5
+   kubectl scale deployment streaming-bridge -n markets --replicas=5
    ```
 
 ---
@@ -204,29 +204,29 @@ Operational procedures for the Markets Data Pipeline.
 
 1. Check CronJob status:
    ```bash
-   kubectl get cronjobs -n surveillance
-   kubectl get jobs -n surveillance --sort-by=.metadata.creationTimestamp
+   kubectl get cronjobs -n markets
+   kubectl get jobs -n markets --sort-by=.metadata.creationTimestamp
    ```
 
 2. Check if job is stuck:
    ```bash
-   kubectl get pods -n surveillance -l app=surveillance-pipeline
-   kubectl describe pod -n surveillance {pod-name}
+   kubectl get pods -n markets -l app=markets-pipeline
+   kubectl describe pod -n markets {pod-name}
    ```
 
 3. Check recent job logs:
    ```bash
-   kubectl logs -n surveillance job/{latest-job-name}
+   kubectl logs -n markets job/{latest-job-name}
    ```
 
 4. If stuck, delete the stuck job (CronJob will create new one next hour):
    ```bash
-   kubectl delete job -n surveillance {stuck-job-name}
+   kubectl delete job -n markets {stuck-job-name}
    ```
 
 5. To trigger manual run:
    ```bash
-   kubectl create job --from=cronjob/surveillance-pipeline manual-run-$(date +%s) -n surveillance
+   kubectl create job --from=cronjob/markets-pipeline manual-run-$(date +%s) -n markets
    ```
 
 ---
@@ -323,11 +323,11 @@ When regulatory events fail all retry attempts, they land in the dead letter que
 3. Replay events using the admin script:
    ```bash
    # Replay specific events
-   kubectl exec -it -n surveillance deploy/regulatory-reporter -- \
+   kubectl exec -it -n markets deploy/regulatory-reporter -- \
      python -m regulatory_reporter.replay --event-ids "id1,id2,id3"
    
    # Replay all unresolved from last 24h
-   kubectl exec -it -n surveillance deploy/regulatory-reporter -- \
+   kubectl exec -it -n markets deploy/regulatory-reporter -- \
      python -m regulatory_reporter.replay --since 24h
    ```
 
@@ -357,7 +357,7 @@ The regulatory reporter caches reference data and refreshes every 5 minutes. For
 
 2. Or via kubectl if curl not available:
    ```bash
-   kubectl exec -it -n surveillance deploy/regulatory-reporter -- \
+   kubectl exec -it -n markets deploy/regulatory-reporter -- \
      curl -X POST localhost:8080/admin/refresh-cache
    ```
 
@@ -434,19 +434,19 @@ Sometimes you need to rebuild tables from scratch (e.g., after schema change or 
 
 **Single model:**
 ```bash
-kubectl exec -it -n surveillance deploy/surveillance-pipeline -- \
+kubectl exec -it -n markets deploy/markets-pipeline -- \
   dbt run --select trades_enriched --full-refresh
 ```
 
 **All curation models:**
 ```bash
-kubectl exec -it -n surveillance deploy/surveillance-pipeline -- \
+kubectl exec -it -n markets deploy/markets-pipeline -- \
   dbt run --select tag:curation --full-refresh
 ```
 
 **Using the force_full_refresh variable:**
 ```bash
-kubectl exec -it -n surveillance deploy/surveillance-pipeline -- \
+kubectl exec -it -n markets deploy/markets-pipeline -- \
   dbt run --select trades_enriched --vars '{"force_full_refresh": true}'
 ```
 
@@ -456,7 +456,7 @@ SELECT
   table_id,
   ROUND(size_bytes / POW(10,9), 2) as size_gb,
   row_count
-FROM `surveillance-int-12345.curation.__TABLES__`
+FROM `markets-int-12345.curation.__TABLES__`
 WHERE table_id = 'trades_enriched'
 ```
 

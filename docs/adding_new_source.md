@@ -316,7 +316,7 @@ This will:
 
 3. Run the pipeline manually:
    ```bash
-   kubectl create job --from=cronjob/surveillance-pipeline test-venue-b -n surveillance
+   kubectl create job --from=cronjob/markets-pipeline test-venue-b -n surveillance
    ```
 
 4. Wait for completion, then verify:

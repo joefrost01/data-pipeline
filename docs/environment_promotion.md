@@ -4,10 +4,10 @@ How to promote changes from int to prod environment.
 
 ## Environment Overview
 
-| Environment | Purpose | Project ID | Who Can Deploy |
-|-------------|---------|------------|----------------|
-| `int` | Integration testing, UAT | `surveillance-int-12345` | All engineers |
-| `prod` | Production | `surveillance-prod-12345` | Release Manager only |
+| Environment | Purpose | Project ID           | Who Can Deploy |
+|-------------|---------|----------------------|----------------|
+| `int` | Integration testing, UAT | `markets-int-12345`  | All engineers |
+| `prod` | Production | `markets-prod-12345` | Release Manager only |
 
 ## Promotion Workflow
 
@@ -48,8 +48,8 @@ After merge to main:
 
 1. Verify deployment:
    ```bash
-   kubectl get pods -n surveillance
-   kubectl logs -n surveillance deploy/surveillance-pipeline --tail=50
+   kubectl get pods -n markets
+   kubectl logs -n markets deploy/surveillance-pipeline --tail=50
    ```
 
 2. Wait for at least one full pipeline cycle (1 hour)
@@ -93,7 +93,7 @@ If your changes include Terraform modifications:
 
 2. Update `terraform/prod/terraform.tfvars`:
    ```hcl
-   project_id                   = "surveillance-prod-12345"
+   project_id                   = "markets-prod-12345"
    region                       = "europe-west2"
    surveillance_partner_project = "partner-surveillance-prod"
    kafka_brokers                = "kafka-prod.internal:9092"
@@ -132,19 +132,19 @@ If your changes include Terraform modifications:
 3. Or, trigger prod deployment manually:
    ```bash
    # Build and push prod image
-   docker build -t gcr.io/surveillance-prod-12345/surveillance-orchestrator:v1.2.3 .
-   docker push gcr.io/surveillance-prod-12345/surveillance-orchestrator:v1.2.3
+   docker build -t gcr.io/markets-prod-12345/markets-orchestrator:v1.2.3 .
+   docker push gcr.io/markets-prod-12345/markets-orchestrator:v1.2.3
    
    # Update K8s deployment
-   kubectl set image -n surveillance \
-     cronjob/surveillance-pipeline \
-     orchestrator=gcr.io/surveillance-prod-12345/surveillance-orchestrator:v1.2.3
+   kubectl set image -n markets \
+     cronjob/markets-pipeline \
+     orchestrator=gcr.io/markets-prod-12345/markets-orchestrator:v1.2.3
    ```
 
 4. Verify deployment:
    ```bash
    # Check next run succeeds
-   kubectl get jobs -n surveillance --watch
+   kubectl get jobs -n markets --watch
    ```
 
 ## Rollback Procedure
@@ -155,12 +155,12 @@ If issues are discovered in prod:
 
 ```bash
 # Find previous working image
-gcloud container images list-tags gcr.io/surveillance-prod-12345/surveillance-orchestrator
+gcloud container images list-tags gcr.io/markets-prod-12345/markets-orchestrator
 
 # Rollback to previous version
-kubectl set image -n surveillance \
-  cronjob/surveillance-pipeline \
-  orchestrator=gcr.io/surveillance-prod-12345/surveillance-orchestrator:v1.2.2
+kubectl set image -n markets \
+  cronjob/markets-pipeline \
+  orchestrator=gcr.io/markets-prod-12345/markets-orchestrator:v1.2.2
 ```
 
 ### dbt Model Rollback
@@ -170,7 +170,7 @@ For dbt changes, you may need to:
 1. Revert the model code
 2. Run a full refresh to restore previous state:
    ```bash
-   kubectl exec -it -n surveillance deploy/surveillance-pipeline -- \
+   kubectl exec -it -n markets deploy/markets-pipeline -- \
      dbt run --select affected_model --full-refresh
    ```
 

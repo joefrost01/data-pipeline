@@ -1,6 +1,6 @@
 # Markets Data Pipeline
 
-A modern, lightweight data platform for Markets trade surveillance using BigQuery, dbt, and minimal orchestration. Designed for simplicity, auditability, and operational excellence.
+A modern, lightweight data platform for Markets using BigQuery, dbt, and minimal orchestration. Designed for simplicity, auditability, and operational excellence.
 
 ## Overview
 

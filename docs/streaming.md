@@ -4,7 +4,7 @@ How we handle high-volume, low-latency data from Kafka sources.
 
 ## Overview
 
-Lane 2 (Streaming) handles sub-hour data that can't wait for the hourly batch cycle. The primary use case is RFQ (Request for Quote) events that feed the surveillance partner's real-time alerting.
+Lane 2 (Streaming) handles sub-hour data that can't wait for the hourly batch cycle. The primary use case is events that feed the regulatory real-time alerting.
 
 ```
 Kafka → Pub/Sub Bridge → Pub/Sub → BigQuery Storage Write API → dbt (dedupe) → Consumer
