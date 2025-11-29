@@ -71,6 +71,7 @@ markets-pipeline/
 - [Support Runbook](docs/support_runbook.md) — Operational procedures
 - [Testing Guide](docs/testing.md) — How to test the pipeline
 - [Environment Promotion](docs/environment_promotion.md) — Deployment workflow
+- [Collibra Integration](docs/collibra.md) — Collibra Integration
 
 ## Architecture
 
