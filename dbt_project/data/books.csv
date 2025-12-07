@@ -1,0 +1,6 @@
+book_id,book_name,desk_id,legal_entity
+BOOK_EQ_LDN,London Cash Equities,EQ_LDN,LBG_LDN
+BOOK_FX_LDN,London FX,FX_LDN,LBG_LDN
+BOOK_RATES_LDN,London Rates,RATES_LDN,LBG_LDN
+BOOK_CREDIT_LDN,London Credit,CRD_LDN,LBG_LDN
+BOOK_EQ_NYC,New York Equities,EQ_NYC,LBG_USA

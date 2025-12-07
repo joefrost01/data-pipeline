@@ -1,25 +1,55 @@
+#version: 2
+#
+#sources:
+#  - name: raw
+#    description: Raw data for local DuckDB development
+#    schema: raw
+#
+#    tables:
+#      - name: murex_trades
+#        description: Local parquet files for Murex trades
+#        external:
+#          location: "data/raw/murex/*.parquet"
+#          options:
+#            format: parquet
+#
+#      - name: venue_a_trades
+#        description: Local parquet files for Venue A trades
+#        external:
+#          location: "data/raw/venue_a/*.parquet"
+#          options:
+#            format: parquet
+#
+#      - name: rfq_stream
+#        description: Local parquet files for RFQ events
+#        external:
+#          location: "data/raw/rfq/*.parquet"
+#          options:
+#            format: parquet
 version: 2
 
 sources:
   - name: control
-    description: Pipeline control tables (written by orchestrator)
-    database: "{{ target.project }}"
+    description: Pipeline control tables for local DuckDB
     schema: control
-    
+
     tables:
       - name: validation_runs
-        description: Audit log of file validation attempts
+        description: Records of validation runs for source completeness checks
         columns:
-          - name: run_id
-          - name: run_timestamp
           - name: source_name
-          - name: file_path
+            description: Logical source name (e.g. 'raw.murex_trades')
+          - name: run_id
+            description: Unique identifier for this validation run
+          - name: run_timestamp
+            description: When the validation ran
+          - name: status
+            description: Status of the run (e.g. SUCCESS, FAILED)
           - name: row_count
-          - name: passed
-          - name: failure_reason
-      
-      - name: dbt_runs
-        description: Audit log of dbt model executions
-      
-      - name: regulatory_submissions
-        description: Audit trail of regulatory report submissions
+            description: Row count observed in the run
+          - name: expected_min_rows
+            description: Minimum expected row count threshold
+          - name: expected_max_rows
+            description: Maximum expected row count threshold
+          - name: notes
+            description: Free text / error context

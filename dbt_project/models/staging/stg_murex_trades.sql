@@ -13,14 +13,14 @@ select
     trade_id as source_trade_id,
     'MUREX' as source_system,
     cast(trade_time as timestamp) as trade_time,
-    cast(counterparty as string) as counterparty_name,
-    cast(trader_id as string) as trader_id,
-    cast(instrument as string) as instrument_id,
-    upper(cast(side as string)) as side,
-    cast(quantity as int64) as quantity,
+    {{ typed_cast('counterparty', 'STRING') }} as counterparty_name,
+    {{ typed_cast('trader_id', 'STRING') }} as trader_id,
+    {{ typed_cast('instrument', 'STRING') }} as instrument_id,
+    upper({{ typed_cast('side', 'STRING') }}) as side,
+    {{ typed_cast('quantity', 'INT64') }} as quantity,
     cast(price as numeric) as price,
-    cast(book_id as string) as book_id,
-    current_timestamp() as loaded_at
+    {{ typed_cast('book_id', 'STRING') }} as book_id,
+    {{ now_ts() }} as loaded_at
 
 from {{ source('raw', 'murex_trades') }}
 

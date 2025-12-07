@@ -19,12 +19,12 @@
 */
 
 select
-    cast(instrument_id as string) as instrument_id,
-    cast(symbol as string) as symbol,
-    cast(isin as string) as isin,
-    cast(asset_class as string) as asset_class,
-    cast(currency as string) as currency,
-    current_timestamp() as updated_at
+    {{ typed_cast('instrument_id', 'STRING') }} as instrument_id,
+    {{ typed_cast('symbol', 'STRING') }} as symbol,
+    {{ typed_cast('isin', 'STRING') }} as isin,
+    {{ typed_cast('asset_class', 'STRING') }} as asset_class,
+    {{ typed_cast('currency', 'STRING') }} as currency,
+    {{ now_ts() }} as updated_at
 
 from {{ source('reference', 'instruments') }}
 where instrument_id is not null

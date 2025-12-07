@@ -73,7 +73,7 @@ with murex as (
         source_system,
         trade_time,
         counterparty_name,
-        cast(null as string) as counterparty_id,  -- Murex provides name only
+        {{ typed_cast('null', 'STRING') }} as counterparty_id,  -- Murex provides name only
         trader_id,
         instrument_id,
         side,
@@ -93,11 +93,11 @@ venue_a as (
         source_system,
         trade_time,
         counterparty_name,
-        cast(null as string) as counterparty_id,
+        {{ typed_cast('null', 'STRING') }} as counterparty_id,
         trader_id,
         instrument_id,
         -- Normalise side values from Venue A (accepts B/S)
-        case 
+        case
             when upper(side) in ('B', 'BUY') then 'BUY'
             when upper(side) in ('S', 'SELL') then 'SELL'
             else upper(side)
@@ -134,11 +134,11 @@ enriched as (
     select
         -- Deterministic trade identity
         {{ generate_trade_id("'markets'", "t.source_system", "t.source_trade_id") }} as trade_id,
-        
+
         -- Source lineage
         t.source_trade_id,
         t.source_system,
-        
+
         -- Trade attributes
         t.trade_time,
         date(t.trade_time) as trade_date,
@@ -146,30 +146,30 @@ enriched as (
         t.quantity,
         t.price,
         t.quantity * t.price as notional,
-        
+
         -- Trader (point-in-time lookup for SCD-2)
         t.trader_id,
         tr.trader_name,
         tr.desk_id,
         tr.compliance_officer,
-        
+
         -- Counterparty (prefer ID match, fall back to normalised name)
         coalesce(t.counterparty_id, cp_by_id.counterparty_id, cp_by_name.counterparty_id) as counterparty_id,
         coalesce(t.counterparty_name, cp_by_id.counterparty_name, cp_by_name.counterparty_name) as counterparty_name,
         coalesce(cp_by_id.counterparty_lei, cp_by_name.counterparty_lei) as counterparty_lei,
-        
+
         -- Instrument (current state, SCD-1)
         t.instrument_id,
         inst.symbol as instrument_symbol,
         inst.isin,
         inst.asset_class,
         inst.currency,
-        
+
         -- Book
         coalesce(t.book_id, tr.desk_id) as book_id,  -- Fall back to trader's desk
         bk.book_name,
         bk.legal_entity,
-        
+
         -- Enrichment quality flags (useful for monitoring)
         case
             when tr.trader_id is null then true
@@ -183,26 +183,26 @@ enriched as (
             when inst.instrument_id is null then true
             else false
         end as instrument_not_found,
-        
+
         -- Audit
         t.loaded_at,
-        current_timestamp() as enriched_at
-        
+        {{ now_ts() }} as enriched_at
+
     from all_trades t
-    
+
     -- Trader lookup (point-in-time for SCD-2)
     left join {{ ref('traders_snapshot') }} tr
         on t.trader_id = tr.trader_id
         and t.trade_time >= tr.dbt_valid_from
         and (t.trade_time < tr.dbt_valid_to or tr.dbt_valid_to is null)
-    
+
     -- Counterparty lookup by ID (if provided)
     left join counterparty_lookup cp_by_id
         on t.counterparty_id is not null
         and t.counterparty_id = cp_by_id.counterparty_id
         and t.trade_time >= cp_by_id.dbt_valid_from
         and (t.trade_time < cp_by_id.dbt_valid_to or cp_by_id.dbt_valid_to is null)
-    
+
     -- Counterparty lookup by normalised name (fallback)
     left join counterparty_lookup cp_by_name
         on t.counterparty_id is null
@@ -210,11 +210,11 @@ enriched as (
         and {{ normalise_counterparty_name('t.counterparty_name') }} = cp_by_name.normalised_name
         and t.trade_time >= cp_by_name.dbt_valid_from
         and (t.trade_time < cp_by_name.dbt_valid_to or cp_by_name.dbt_valid_to is null)
-    
+
     -- Instrument lookup (current state only)
     left join {{ ref('dim_instrument') }} inst
         on t.instrument_id = inst.instrument_id
-    
+
     -- Book lookup (point-in-time)
     left join {{ ref('books_snapshot') }} bk
         on coalesce(t.book_id, tr.desk_id) = bk.book_id

@@ -10,11 +10,11 @@
 */
 
 select
-    cast(book_id as string) as book_id,
-    cast(book_name as string) as book_name,
-    cast(desk_id as string) as desk_id,
-    cast(legal_entity as string) as legal_entity,
-    current_timestamp() as loaded_at
+    {{ typed_cast('book_id', 'STRING') }} as book_id,
+    {{ typed_cast('book_name', 'STRING') }} as book_name,
+    {{ typed_cast('desk_id', 'STRING') }} as desk_id,
+    {{ typed_cast('legal_entity', 'STRING') }} as legal_entity,
+    {{ now_ts() }} as loaded_at
 
 from {{ source('reference', 'books') }}
 where book_id is not null

@@ -10,12 +10,12 @@
 */
 
 select
-    cast(counterparty_id as string) as counterparty_id,
-    cast(counterparty_name as string) as counterparty_name,
-    cast(lei as string) as lei,
-    cast(country as string) as country,
-    cast(status as string) as status,
-    current_timestamp() as loaded_at
+    {{ typed_cast('counterparty_id', 'STRING') }} as counterparty_id,
+    {{ typed_cast('counterparty_name', 'STRING') }} as counterparty_name,
+    {{ typed_cast('lei', 'STRING') }} as lei,
+    {{ typed_cast('country', 'STRING') }} as country,
+    {{ typed_cast('status', 'STRING') }} as status,
+    {{ now_ts() }} as loaded_at
 
 from {{ source('reference', 'counterparties') }}
 where counterparty_id is not null

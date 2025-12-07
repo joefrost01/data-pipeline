@@ -29,7 +29,7 @@ actual_arrivals as (
         count(*) as file_count,
         sum(row_count) as total_rows
     from {{ source('control', 'validation_runs') }}
-    where passed = true
+    where status = 'PASSED'
     group by source_name, date(run_timestamp)
 ),
 
@@ -40,10 +40,7 @@ missing_streak as (
         d.date_value as business_date,
         case when a.source_name is null then 1 else 0 end as is_missing
     from expected_sources e
-    cross join unnest(generate_date_array(
-        date_sub(current_date(), interval 30 day),
-        current_date()
-    )) as d(date_value)
+    cross join {{ date_spine(date_sub_days(today_date(), 30), today_date(), 'd') }}
     left join actual_arrivals a
         on e.source_name = a.source_name
         and d.date_value = a.business_date
@@ -82,12 +79,23 @@ select
     a.total_rows,
     case
         when a.source_name is null then 'MISSING'
-        when a.first_file_at > timestamp(concat(cast(a.business_date as string), ' ', e.expected_by)) then 'LATE'
+                when a.first_file_at >
+        {% if target.type == 'duckdb' %}
+          -- DuckDB: parse 'YYYY-MM-DD HH:MM:SS'
+          (cast(a.business_date as timestamp) + interval 6 hour)
+        {% else %}
+          -- BigQuery: original behaviour
+          timestamp(concat(cast(a.business_date as string), ' ', e.expected_by))
+        {% endif %} then 'LATE'
         when a.file_count < e.min_files_per_day then 'PARTIAL'
         else 'COMPLETE'
     end as status,
     cm.consecutive_missing_days,
+    {% if target.type == 'duckdb' -%}
+    current_timestamp as checked_at
+    {%- else -%}
     current_timestamp() as checked_at
+    {%- endif %}
 
 from expected_sources e
 left join actual_arrivals a

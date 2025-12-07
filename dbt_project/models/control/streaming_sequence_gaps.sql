@@ -26,10 +26,19 @@ with sequences as (
             partition by _kafka_partition
             order by source_sequence_id
         ) as prev_sequence_id,
+        -- Use rfq_timestamp for DuckDB (no _ingestion_time in local data)
+        {% if is_duckdb() %}
+        rfq_timestamp
+        {% else %}
         _ingestion_time
+        {% endif %} as _ingestion_time
     from {{ ref('stg_rfqs') }}
     where source_sequence_id is not null
-      and _ingestion_time >= timestamp_sub(current_timestamp(), interval 7 day)
+      and {% if is_duckdb() %}
+          rfq_timestamp >= {{ timestamp_sub('current_timestamp', 7, 'day') }}
+      {% else %}
+          _ingestion_time >= {{ timestamp_sub('current_timestamp()', 7, 'day') }}
+      {% endif %}
 ),
 
 gaps as (
@@ -59,8 +68,8 @@ select
         when gap_size > 10 then 'MEDIUM'
         else 'LOW'
     end as severity,
-    cast(null as timestamp) as resolved_at,
-    cast(null as string) as resolution_type
+    {{ typed_cast('null', 'TIMESTAMP') }} as resolved_at,
+    {{ typed_cast('null', 'STRING') }} as resolution_type
 
 from gaps
 order by detected_at desc

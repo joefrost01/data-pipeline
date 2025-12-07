@@ -16,21 +16,22 @@ select
     exec_id as source_trade_id,
     'VENUE_A' as source_system,
     cast(exec_timestamp as timestamp) as trade_time,
-    cast(null as string) as counterparty_name,  -- Venue A doesn't provide
-    cast(trader as string) as trader_id,
-    cast(symbol as string) as instrument_id,
+    {{ typed_cast('null', 'STRING') }} as counterparty_name,  -- Venue A doesn't provide
+    {{ typed_cast('trader', 'STRING') }} as trader_id,
+    {{ typed_cast('symbol', 'STRING') }} as instrument_id,
     -- Normalise side: Venue A uses B/S, we use BUY/SELL
-    case upper(cast(side as string))
+    case upper({{ typed_cast('side', 'STRING') }})
         when 'B' then 'BUY'
         when 'BUY' then 'BUY'
         when 'S' then 'SELL'
         when 'SELL' then 'SELL'
-        else upper(cast(side as string))  -- Pass through unknown values for visibility
+        else upper({{ typed_cast('side', 'STRING') }})  -- Pass through unknown values for visibility
     end as side,
     cast(qty as int64) as quantity,
     cast(px as numeric) as price,
     cast(null as string) as book_id,  -- Enriched later from trader mapping
-    current_timestamp() as loaded_at
+    {{ now_ts() }} as loaded_at
+
 
 from {{ source('raw', 'venue_a_trades') }}
 

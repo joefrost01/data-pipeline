@@ -60,8 +60,8 @@ select
     -- Audit
     loaded_at,
     enriched_at,
-    current_timestamp() as extracted_at
+    {{ now_ts() }} as extracted_at
 
 from {{ ref('trades_enriched') }}
 
-where trade_date >= date_sub(current_date(), interval 7 day)
+where trade_date >= {{ date_sub_days(today_date(), 7) }}

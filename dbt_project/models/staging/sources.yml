@@ -2,17 +2,15 @@ version: 2
 
 sources:
   - name: raw
-    description: Raw data from external tables and streaming ingestion
-    database: "{{ target.project }}"
+    description: Raw data for local DuckDB development
     schema: raw
-    
+
     tables:
       - name: murex_trades
-        description: Trade confirmations from Murex (external table over Parquet)
+        description: Trade confirmations from Murex (local parquet files)
         external:
-          location: "gs://{{ target.project }}-staging/murex/*.parquet"
-          options:
-            format: PARQUET
+          location: "data/raw/murex/*.parquet"   # put local parquet files here
+          format: parquet
         columns:
           - name: trade_id
             description: Murex native trade identifier
@@ -32,13 +30,12 @@ sources:
             description: Execution price
           - name: book_id
             description: Trading book
-      
+
       - name: venue_a_trades
-        description: Trades from Venue A (external table over Parquet)
+        description: Trades from Venue A (local parquet files)
         external:
-          location: "gs://{{ target.project }}-staging/venue_a/*.parquet"
-          options:
-            format: PARQUET
+          location: "data/raw/venue_a/*.parquet"
+          format: parquet
         columns:
           - name: exec_id
             description: Venue execution ID
@@ -56,9 +53,11 @@ sources:
             description: Execution price
           - name: trader
             description: Trader ID
-      
+
       - name: rfq_stream
-        description: Streaming RFQ events from Kafka via Pub/Sub
+        description: Streaming RFQ events (local parquet files or staging extract)
+        # If you want this from parquet as well, create data/raw/rfq/*.parquet
+        # and add an external block like the others.
         columns:
           - name: rfq_id
             description: Unique RFQ identifier
@@ -83,13 +82,12 @@ sources:
           - name: _kafka_offset
             description: Source Kafka offset
           - name: _ingestion_time
-            description: BigQuery ingestion timestamp
+            description: Ingestion timestamp
 
   - name: reference
-    description: Reference data from external tables
-    database: "{{ target.project }}"
+    description: Reference data for local DuckDB development
     schema: raw
-    
+
     tables:
       - name: traders
         description: Trader reference data
@@ -99,7 +97,7 @@ sources:
           - name: desk_id
           - name: status
           - name: compliance_officer
-      
+
       - name: counterparties
         description: Counterparty reference data
         columns:
@@ -108,7 +106,7 @@ sources:
           - name: lei
           - name: country
           - name: status
-      
+
       - name: instruments
         description: Instrument reference data
         columns:
@@ -117,7 +115,7 @@ sources:
           - name: isin
           - name: asset_class
           - name: currency
-      
+
       - name: books
         description: Trading book hierarchy
         columns:
