@@ -1,0 +1,43 @@
+# Example ConfigMap for table mappings
+# Apply with: kubectl apply -f configmap.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-table-config
+  labels:
+    app: orchestrator
+data:
+  # Trading feeds
+  trading.yaml: |
+    trades_*.csv:
+      table: raw_trades
+      go_file:
+        pattern: trades_*.go
+        format: properties
+        row_count_key: record_count
+
+    positions_*.csv:
+      table: raw_positions
+      go_file:
+        pattern: positions_*.ctl
+        format: csv
+        row_count_column: 1
+
+  # Reference data
+  reference.yaml: |
+    instruments_*.csv: raw_instruments
+    counterparties_*.csv: raw_counterparties
+    currencies_*.csv: raw_currencies
+
+  # Market data
+  market_data.yaml: |
+    eod_prices_*.csv:
+      table: raw_eod_prices
+      trailer:
+        row_count_column: 1
+
+    fx_rates_*.csv:
+      table: raw_fx_rates
+      trailer:
+        row_count_column: 0

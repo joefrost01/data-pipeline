@@ -1,0 +1,57 @@
+# Example Helm values for deploying the Orchestrator to GKE
+# Adjust to your environment
+
+replicaCount: 1
+
+image:
+  repository: gcr.io/your-project/orchestrator
+  tag: latest
+  pullPolicy: Always
+
+# Environment variables
+env:
+  LANDING_PATH: gs://your-project-data/landing
+  ARCHIVE_PATH: gs://your-project-data/archive
+  FAILED_PATH: gs://your-project-data/failed
+  TABLE_CONFIG_PATH: /etc/orchestrator/tables
+  STAGING_BUCKET: your-project-data
+  GCP_PROJECT: your-project
+  BQ_DATASET: raw
+  LOADER_BACKEND: bigquery
+  LOADER_WORKERS: "4"
+
+# Service account for Workload Identity
+serviceAccount:
+  create: true
+  annotations:
+    iam.gke.io/gcp-service-account: orchestrator@your-project.iam.gserviceaccount.com
+
+# ConfigMap volume for table mappings
+volumes:
+  - name: table-config
+    configMap:
+      name: orchestrator-table-config
+
+volumeMounts:
+  - name: table-config
+    mountPath: /etc/orchestrator/tables
+    readOnly: true
+
+# Resource limits
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+
+# Health checks (simple liveness, no readiness needed for batch)
+livenessProbe:
+  exec:
+    command:
+      - python
+      - -c
+      - "print('ok')"
+  initialDelaySeconds: 10
+  periodSeconds: 30

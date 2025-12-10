@@ -1,0 +1,12 @@
+# Market data table mappings
+# EOD prices use trailer records for validation
+
+eod_prices_*.csv:
+  table: raw_eod_prices
+  trailer:
+    row_count_column: 1
+
+fx_rates_*.csv:
+  table: raw_fx_rates
+  trailer:
+    row_count_column: 0

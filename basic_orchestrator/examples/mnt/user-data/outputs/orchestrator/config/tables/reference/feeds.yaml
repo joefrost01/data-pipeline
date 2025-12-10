@@ -1,0 +1,6 @@
+# Reference data table mappings
+# These are simple feeds with no validation requirements
+
+instruments_*.csv: raw_instruments
+counterparties_*.csv: raw_counterparties
+currencies_*.csv: raw_currencies

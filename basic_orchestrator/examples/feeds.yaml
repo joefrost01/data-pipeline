@@ -1,0 +1,16 @@
+# Trading data table mappings
+# These feeds arrive with go files containing row counts
+
+trades_*.csv:
+  table: raw_trades
+  go_file:
+    pattern: trades_*.go
+    format: properties
+    row_count_key: record_count
+
+positions_*.csv:
+  table: raw_positions
+  go_file:
+    pattern: positions_*.ctl
+    format: csv
+    row_count_column: 1

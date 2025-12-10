@@ -1,0 +1,14 @@
+# Core dependencies
+polars>=0.20.0
+pyyaml>=6.0
+
+# Local development (DuckDB)
+duckdb>=0.10.0
+
+# Production (BigQuery/GCS)
+google-cloud-bigquery>=3.0.0
+google-cloud-storage>=2.0.0
+
+# dbt (choose your adapter)
+dbt-duckdb>=1.7.0      # For local development
+# dbt-bigquery>=1.7.0    # For production
