@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: stg_trades
+    description: Staged trades with defensive typing
+    config:
+      # Model continues even if tests fail
+      +severity: warn
+
+    columns:
+      - name: trade_id
+        tests:
+          - not_null:
+              severity: warn
+          - unique:
+              severity: warn
+
+      - name: trade_date
+        tests:
+          - not_null:
+              severity: warn
+
+      - name: _has_data_quality_issues
+        tests:
+          - accepted_values:
+              values: [false]
+              severity: warn
+              # This test will warn when there are casting failures

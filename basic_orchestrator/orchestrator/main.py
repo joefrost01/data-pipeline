@@ -8,6 +8,12 @@ This module ties everything together:
 4. Handles schema drift by capturing new columns in _extra JSON field
 5. Tracks all loads with metadata for full traceability
 
+Key resilience principles:
+1. The main loop never dies
+2. Individual file failures don't block other files
+3. Infrastructure failures are logged and retried next cycle
+4. All errors emit structured logs for Dynatrace
+
 The main loop is deliberately simple - poll, load, transform, sleep, repeat.
 No event infrastructure, no complex state management, just a loop.
 """
@@ -20,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
+from typing import Any
 
 import polars as pl
 
@@ -27,55 +34,95 @@ from orchestrator.config import Config, TableConfig, load_table_mapping, resolve
 from orchestrator.loader import DataLoader, DuckDBLoader, BigQueryLoader, LoadResult
 from orchestrator.storage import Storage, LocalStorage, GCSStorage
 from orchestrator.validation import (
-    ValidationResult,
     find_go_file,
     validate_with_go_file,
     process_with_trailer,
 )
 
-# Configure logging with timestamp
+
+class StructuredLogger:
+    """
+    Logger that emits JSON for Dynatrace ingestion.
+
+    Dynatrace can parse JSON logs and extract fields for alerting,
+    dashboards, and correlation with traces.
+    """
+
+    def __init__(self, name: str):
+        self.logger = logging.getLogger(name)
+
+    def _emit(self, level: str, message: str, **context: Any) -> None:
+        """Emit a structured log entry."""
+        entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": level,
+            "message": message,
+            "service": "orchestrator",
+            **context,
+        }
+
+        log_method = getattr(self.logger, level.lower())
+        log_method(json.dumps(entry))
+
+    def info(self, message: str, **context: Any) -> None:
+        self._emit("INFO", message, **context)
+
+    def warning(self, message: str, **context: Any) -> None:
+        self._emit("WARNING", message, **context)
+
+    def error(self, message: str, **context: Any) -> None:
+        self._emit("ERROR", message, **context)
+
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(message)s",  # Just the message - it's already JSON
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger(__name__)
+log = StructuredLogger(__name__)
 
 
-def create_components(config: Config) -> tuple[Storage, DataLoader]:
+def create_components(config: Config) -> tuple[Storage, DataLoader] | tuple[None, None]:
     """
-    Create the appropriate storage and loader implementations based on config.
+    Create storage and loader, returning (None, None) on failure.
     
-    Args:
-        config: Application configuration
-    
-    Returns:
-        Tuple of (storage, loader) implementations
-    
-    Raises:
-        ValueError: If required config is missing for the selected backend
+    This allows the main loop to continue and retry next cycle
+    rather than crashing on transient infrastructure issues.
     """
-    if config.backend == "bigquery":
-        # Validate required BigQuery config
-        if not all([config.gcp_project, config.bq_dataset, config.staging_bucket]):
-            raise ValueError(
-                "BigQuery backend requires GCP_PROJECT, BQ_DATASET, and STAGING_BUCKET"
+    try:
+        if config.backend == "bigquery":
+            if not all([config.gcp_project, config.bq_dataset, config.staging_bucket]):
+                log.error(
+                    "Missing BigQuery configuration",
+                    backend=config.backend,
+                    has_project=bool(config.gcp_project),
+                    has_dataset=bool(config.bq_dataset),
+                    has_bucket=bool(config.staging_bucket),
+                )
+                return None, None
+
+            return (
+                GCSStorage(),
+                BigQueryLoader(
+                    config.gcp_project,
+                    config.bq_dataset,
+                    config.staging_bucket,
+                ),
             )
-        
-        return (
-            GCSStorage(),
-            BigQueryLoader(
-                config.gcp_project,
-                config.bq_dataset,
-                config.staging_bucket,
-            ),
+        else:
+            return (
+                LocalStorage(),
+                DuckDBLoader(config.duckdb_path),
+            )
+    except Exception as e:
+        log.error(
+            "Failed to create components",
+            error=str(e),
+            error_type=type(e).__name__,
+            backend=config.backend,
         )
-    else:
-        # Default to DuckDB
-        return (
-            LocalStorage(),
-            DuckDBLoader(config.duckdb_path),
-        )
+        return None, None
 
 
 def prepare_dataframe(
@@ -146,7 +193,7 @@ def load_file(
     config: Config,
     mapping: dict[str, TableConfig],
     available_files: list[str],
-) -> bool:
+) -> dict[str, Any]:
     """
     Load a single file into the data warehouse.
     
@@ -171,36 +218,44 @@ def load_file(
         available_files: All files in landing directory (for go file matching)
     
     Returns:
-        True if file was processed (success or failure), False if skipped
-    
-    Raises:
-        Exception: Re-raises any exception after moving file to failed directory
+        Dict with keys: success, filename, table, rows, duration, error
     """
     filename = Path(path).name
-    
-    # Resolve table configuration
-    try:
-        table_config = resolve_table(filename, mapping)
-    except ValueError as e:
-        log.warning(f"Skipping {filename}: {e}")
-        return False
-    
-    # Check for go file if required
-    go_path = None
-    if table_config.go_file:
-        go_path = find_go_file(filename, table_config.go_file, available_files)
-        if not go_path:
-            log.debug(f"Skipping {filename} - go file not yet available")
-            return False
-    
-    # Generate load tracking info
-    load_id = str(uuid4())
     started_at = datetime.utcnow()
-    
-    log.info(f"Loading {filename} -> {table_config.table} [{load_id[:8]}...]")
-    
+    load_id = str(uuid4())
+
+    result = {
+        "success": False,
+        "filename": filename,
+        "load_id": load_id,
+        "table": None,
+        "rows": 0,
+        "duration_seconds": 0,
+        "error": None,
+        "error_type": None,
+        "skipped": False,
+    }
+
     try:
-        # Read CSV with all columns as strings (no type inference headaches)
+        # Resolve table configuration
+        try:
+            table_config = resolve_table(filename, mapping)
+            result["table"] = table_config.table
+        except ValueError as e:
+            result["skipped"] = True
+            result["error"] = str(e)
+            return result
+
+        # Check for go file if required
+        go_path = None
+        if table_config.go_file:
+            go_path = find_go_file(filename, table_config.go_file, available_files)
+            if not go_path:
+                result["skipped"] = True
+                result["error"] = "Go file not yet available"
+                return result
+
+        # Read CSV
         data = storage.read_file(path)
         df = pl.read_csv(data, infer_schema_length=0)
         
@@ -214,37 +269,27 @@ def load_file(
             )
             
             if not validation.valid:
-                log.error(f"  Trailer validation failed: {validation.error}")
+                result["error"] = f"Trailer validation: {validation.error}"
                 storage.move(path, storage.join(config.failed_path, filename))
-                return True
-            
-            log.info(f"  Trailer validation passed: {validation.actual_rows} rows")
+                return result
         
-        # Handle go file validation if configured
+        # Go file validation
         if table_config.go_file and go_path:
             validation = validate_with_go_file(
-                go_path,
-                storage,
-                table_config.go_file,
-                len(df),
+                go_path, storage, table_config.go_file, len(df)
             )
-            
             if not validation.valid:
-                log.error(f"  Go file validation failed: {validation.error}")
+                result["error"] = f"Go file validation: {validation.error}"
                 storage.move(path, storage.join(config.failed_path, filename))
-                return True
-            
-            log.info(f"  Go file validation passed: {validation.actual_rows} rows")
+                return result
         
-        # Handle schema drift
+        # Schema drift handling
         existing_columns = loader.get_columns(table_config.table)
         df = prepare_dataframe(df, existing_columns)
-        
-        # Add load tracking column
         df = df.with_columns(pl.lit(load_id).alias("_load_id"))
         
-        # Load into target table
-        row_count = len(df)
+        # Load
+        result["rows"] = len(df)
         loader.load(df, table_config.table)
         
         completed_at = datetime.utcnow()
@@ -254,12 +299,12 @@ def load_file(
             load_id=load_id,
             filename=filename,
             table=table_config.table,
-            row_count=row_count,
+            row_count=len(df),
             started_at=started_at,
             completed_at=completed_at,
         ))
         
-        # Archive successfully processed files
+        # Archive
         storage.move(path, storage.join(config.archive_path, filename))
         
         # Archive go file too if present
@@ -267,16 +312,24 @@ def load_file(
             go_filename = Path(go_path).name
             storage.move(go_path, storage.join(config.archive_path, go_filename))
         
-        duration = (completed_at - started_at).total_seconds()
-        log.info(f"  Completed in {duration:.1f}s")
-        
-        return True
-    
+        result["success"] = True
+        result["duration_seconds"] = (completed_at - started_at).total_seconds()
+
     except Exception as e:
-        log.error(f"  Failed: {e}")
-        # Move to failed directory for investigation
-        storage.move(path, storage.join(config.failed_path, filename))
-        raise
+        result["error"] = str(e)
+        result["error_type"] = type(e).__name__
+
+        # Try to move to failed - but don't fail if this fails
+        try:
+            storage.move(path, storage.join(config.failed_path, filename))
+        except Exception as move_error:
+            log.error(
+                "Failed to move file to failed directory",
+                filename=filename,
+                error=str(move_error),
+            )
+
+    return result
 
 
 def load_all(
@@ -286,82 +339,125 @@ def load_all(
     config: Config,
     mapping: dict[str, TableConfig],
     available_files: list[str],
-) -> list[str]:
+) -> dict[str, Any]:
     """
-    Load multiple files in parallel using a thread pool.
+    Load all files, returning aggregate results.
     
-    Uses ThreadPoolExecutor for parallel I/O. The thread count is
-    configured via LOADER_WORKERS (default: 1 for sequential processing).
-    
-    Even with workers=1, using the executor provides consistent code paths
-    and makes scaling up trivial when needed.
-    
-    Args:
-        files: List of data file paths to load
-        storage: Storage implementation
-        loader: Data loader implementation
-        config: Application configuration
-        mapping: Table mapping configuration
-        available_files: All files in landing (for go file matching)
-    
-    Returns:
-        List of filenames that failed to load
+    Never raises - all errors are captured in the results dict.
     """
-    errors = []
+    results = {
+        "total": len(files),
+        "succeeded": 0,
+        "failed": 0,
+        "skipped": 0,
+        "total_rows": 0,
+        "failures": [],
+    }
     
     with ThreadPoolExecutor(max_workers=config.workers) as executor:
         # Submit all files for processing
         future_to_file = {
             executor.submit(
-                load_file,
-                f,
-                storage,
-                loader,
-                config,
-                mapping,
-                available_files,
+                load_file, f, storage, loader, config, mapping, available_files
             ): f
             for f in files
         }
-        
-        # Collect results as they complete
+
         for future in as_completed(future_to_file):
-            path = future_to_file[future]
-            filename = Path(path).name
-            
             try:
-                future.result()
+                result = future.result()
+
+                if result["skipped"]:
+                    results["skipped"] += 1
+                elif result["success"]:
+                    results["succeeded"] += 1
+                    results["total_rows"] += result["rows"]
+                    log.info(
+                        "File loaded successfully",
+                        filename=result["filename"],
+                        table=result["table"],
+                        rows=result["rows"],
+                        duration_seconds=result["duration_seconds"],
+                        load_id=result["load_id"],
+                    )
+                else:
+                    results["failed"] += 1
+                    results["failures"].append(result)
+                    log.error(
+                        "File load failed",
+                        filename=result["filename"],
+                        table=result["table"],
+                        error=result["error"],
+                        error_type=result["error_type"],
+                        load_id=result["load_id"],
+                    )
+
             except Exception as e:
-                log.error(f"Failed to load {filename}: {e}")
-                errors.append(filename)
+                # This shouldn't happen, but catch it anyway
+                results["failed"] += 1
+                log.error(
+                    "Unexpected error in thread",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
     
-    return errors
+    return results
 
 
-def run_dbt() -> bool:
+def run_dbt() -> dict[str, Any]:
     """
-    Execute dbt run to transform loaded data.
+    Run dbt with resilience.
     
-    Runs dbt as a subprocess and captures output. Logs stderr on failure.
-    
-    Returns:
-        True if dbt completed successfully, False otherwise
+    Returns result dict rather than bool, captures all output.
     """
-    log.info("Running dbt...")
+    result = {
+        "success": False,
+        "return_code": None,
+        "duration_seconds": 0,
+        "error": None,
+    }
     
-    result = subprocess.run(
-        ["dbt", "run"],
-        capture_output=True,
-        text=True,
-    )
+    started_at = datetime.utcnow()
     
-    if result.returncode != 0:
-        log.error(f"dbt failed with return code {result.returncode}")
-        log.error(f"stderr: {result.stderr}")
-        return False
+    try:
+        proc = subprocess.run(
+            ["dbt", "run", "--fail-fast", "false"],  # Don't stop on first failure
+            capture_output=True,
+            text=True,
+            timeout=3600,  # 1 hour timeout
+        )
+
+        result["return_code"] = proc.returncode
+        result["success"] = proc.returncode == 0
+
+        if not result["success"]:
+            result["error"] = proc.stderr or "dbt returned non-zero exit code"
+            log.error(
+                "dbt run completed with failures",
+                return_code=proc.returncode,
+                stderr=proc.stderr[:1000] if proc.stderr else None,
+            )
+        else:
+            log.info("dbt run completed successfully")
+
+    except subprocess.TimeoutExpired:
+        result["error"] = "dbt run timed out after 1 hour"
+        log.error("dbt run timed out", timeout_seconds=3600)
+
+    except FileNotFoundError:
+        result["error"] = "dbt command not found"
+        log.error("dbt command not found - is dbt installed?")
+
+    except Exception as e:
+        result["error"] = str(e)
+        log.error(
+            "dbt run failed unexpectedly",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
     
-    log.info("dbt completed successfully")
-    return True
+    result["duration_seconds"] = (datetime.utcnow() - started_at).total_seconds()
+    return result
 
 
 def get_data_files(files: list[str], mapping: dict[str, TableConfig]) -> list[str]:
@@ -385,17 +481,11 @@ def get_data_files(files: list[str], mapping: dict[str, TableConfig]) -> list[st
         if table_config.go_file:
             go_patterns.add(table_config.go_file.pattern)
     
-    # Filter to data files only
+    import fnmatch
     data_files = []
     for filepath in files:
         filename = Path(filepath).name
-        
-        # Check if this file matches any go file pattern
-        is_go_file = any(
-            __import__("fnmatch").fnmatch(filename, pattern)
-            for pattern in go_patterns
-        )
-        
+        is_go_file = any(fnmatch.fnmatch(filename, p) for p in go_patterns)
         if not is_go_file:
             data_files.append(filepath)
     
@@ -404,66 +494,125 @@ def get_data_files(files: list[str], mapping: dict[str, TableConfig]) -> list[st
 
 def main() -> None:
     """
-    Main orchestration loop.
+    Main loop - designed to never die.
     
-    Runs continuously:
-    1. Reload table mapping (picks up ConfigMap changes)
-    2. List files in landing directory
-    3. Load any data files found
-    4. Run dbt if files were loaded
-    5. Sleep and repeat
-    
-    The loop continues indefinitely until the process is terminated.
+    Every operation is wrapped in try/catch. Infrastructure failures
+    cause a retry next cycle. The loop only exits on SIGTERM/SIGINT.
     """
-    # Load configuration from environment
-    config = Config.from_env()
+    log.info("Orchestrator starting")
     
-    # Create storage and loader implementations
-    storage, loader = create_components(config)
+    # Load config - this can fail, but we retry
+    config = None
+    while config is None:
+        try:
+            config = Config.from_env()
+        except Exception as e:
+            log.error(
+                "Failed to load configuration - retrying in 30s",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            time.sleep(30)
     
-    log.info(f"Orchestrator starting")
-    log.info(f"  Backend: {config.backend}")
-    log.info(f"  Workers: {config.workers}")
-    log.info(f"  Landing: {config.landing_path}")
-    log.info(f"  Archive: {config.archive_path}")
-    log.info(f"  Failed:  {config.failed_path}")
-    log.info(f"  Config:  {config.table_config_path}")
+    log.info(
+        "Configuration loaded",
+        backend=config.backend,
+        workers=config.workers,
+        landing_path=config.landing_path,
+    )
+    
+    # Track consecutive infrastructure failures for backoff
+    consecutive_infra_failures = 0
+    max_backoff_seconds = 300  # 5 minutes max
     
     while True:
+        cycle_start = datetime.utcnow()
+
         try:
-            # Reload table mapping each iteration
-            # This allows ConfigMap updates to take effect without restart
-            mapping = load_table_mapping(config.table_config_path)
+            # Create components - may fail transiently
+            storage, loader = create_components(config)
+
+            if storage is None or loader is None:
+                consecutive_infra_failures += 1
+                backoff = min(30 * consecutive_infra_failures, max_backoff_seconds)
+                log.warning(
+                    "Infrastructure not available - backing off",
+                    backoff_seconds=backoff,
+                    consecutive_failures=consecutive_infra_failures,
+                )
+                time.sleep(backoff)
+                continue
+
+            # Reset backoff on successful connection
+            consecutive_infra_failures = 0
+
+            # Load table mapping
+            try:
+                mapping = load_table_mapping(config.table_config_path)
+            except Exception as e:
+                log.error(
+                    "Failed to load table mapping",
+                    error=str(e),
+                    config_path=config.table_config_path,
+                )
+                time.sleep(30)
+                continue
             
-            # List all files in landing directory
-            all_files = storage.list_files(config.landing_path)
+            # List files
+            try:
+                all_files = storage.list_files(config.landing_path)
+            except Exception as e:
+                log.error(
+                    "Failed to list landing directory",
+                    error=str(e),
+                    landing_path=config.landing_path,
+                )
+                time.sleep(30)
+                continue
             
-            # Filter to data files only (exclude go/control files)
+            # Filter and process
             data_files = get_data_files(all_files, mapping)
             
             if data_files:
-                log.info(f"Found {len(data_files)} data files to process")
-                
-                # Load all files (parallel if workers > 1)
-                errors = load_all(
-                    data_files,
-                    storage,
-                    loader,
-                    config,
-                    mapping,
-                    all_files,
+                log.info(
+                    "Processing batch",
+                    file_count=len(data_files),
+                    total_files_in_landing=len(all_files),
                 )
                 
-                # Run dbt after loading
-                run_dbt()
+                # Load files
+                load_results = load_all(
+                    data_files, storage, loader, config, mapping, all_files
+                )
                 
-                if errors:
-                    log.warning(f"Batch completed with {len(errors)} failures: {errors}")
+                # Run dbt (even if some loads failed - process what we can)
+                if load_results["succeeded"] > 0:
+                    dbt_result = run_dbt()
                 else:
-                    log.info("Batch completed successfully")
+                    dbt_result = {"success": True, "skipped": True}
+
+                # Log batch summary
+                log.info(
+                    "Batch complete",
+                    files_succeeded=load_results["succeeded"],
+                    files_failed=load_results["failed"],
+                    files_skipped=load_results["skipped"],
+                    total_rows=load_results["total_rows"],
+                    dbt_success=dbt_result["success"],
+                    cycle_duration_seconds=(datetime.utcnow() - cycle_start).total_seconds(),
+                )
         
+        except KeyboardInterrupt:
+            log.info("Shutdown requested")
+            break
+
         except Exception as e:
-            log.error(f"Error in main loop: {e}")
+            # Catch-all for anything we missed
+            log.error(
+                "Unexpected error in main loop",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
         
         # Sleep before next poll
         time.sleep(10)
