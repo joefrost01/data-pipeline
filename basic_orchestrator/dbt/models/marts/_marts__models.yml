@@ -1,0 +1,333 @@
+version: 2
+
+models:
+  # ============================================
+  # Utility Dimensions
+  # ============================================
+  
+  - name: dim_date
+    description: |
+      Date dimension with natural integer key (YYYYMMDD).
+      Pre-populated for 2020-2030.
+    columns:
+      - name: date_key
+        description: Natural key in YYYYMMDD format
+        tests:
+          - unique
+          - not_null
+      - name: date_utc
+        description: Date value
+      - name: year
+        description: Calendar year
+      - name: quarter
+        description: Calendar quarter (1-4)
+      - name: month
+        description: Calendar month (1-12)
+      - name: day_of_month
+        description: Day of month (1-31)
+      - name: day_of_week
+        description: Day of week (0=Sun or 1=Mon depending on platform)
+      - name: iso_week
+        description: ISO week number
+      - name: is_weekend
+        description: True if Saturday or Sunday
+  
+  - name: dim_time
+    description: |
+      Time dimension with natural integer key (HHMMSS).
+      One row per second (86,400 rows).
+    columns:
+      - name: time_key
+        description: Natural key in HHMMSS format
+        tests:
+          - unique
+          - not_null
+      - name: hour
+        description: Hour (0-23)
+      - name: minute
+        description: Minute (0-59)
+      - name: second
+        description: Second (0-59)
+
+  # ============================================
+  # SCD2 Dimensions
+  # ============================================
+  
+  - name: dim_org
+    description: |
+      Organisation dimension with SCD Type 2 history.
+      Business key: legal_entity|division|desk|book
+      
+      Preserves organisational structure as it was at any point in time.
+    columns:
+      - name: org_sk
+        description: Surrogate key (hash of business key + valid_from)
+        tests:
+          - unique
+          - not_null
+      - name: org_bk
+        description: Business key (pipe-delimited)
+        tests:
+          - not_null
+      - name: legal_entity
+        description: Legal entity
+      - name: division
+        description: Division
+      - name: desk
+        description: Trading desk
+      - name: book
+        description: Trading book
+      - name: valid_from_utc
+        description: When this version became effective
+      - name: valid_to_utc
+        description: When this version was superseded
+      - name: is_current
+        description: True for the current version
+  
+  - name: dim_trader
+    description: |
+      Trader dimension with SCD Type 2 history.
+      Business key: trader_id
+    columns:
+      - name: trader_sk
+        description: Surrogate key
+        tests:
+          - unique
+          - not_null
+      - name: trader_bk
+        description: Business key (trader_id)
+        tests:
+          - not_null
+      - name: trader_id
+        description: Trader identifier
+      - name: trader_name
+        description: Trader name (null if not from reference data)
+      - name: trader_type
+        description: HUMAN or ALGO
+      - name: valid_from_utc
+        description: When this version became effective
+      - name: valid_to_utc
+        description: When this version was superseded
+      - name: is_current
+        description: True for the current version
+  
+  - name: dim_account
+    description: |
+      Account dimension with SCD Type 2 history.
+      Business key: account_id
+    columns:
+      - name: account_sk
+        description: Surrogate key
+        tests:
+          - unique
+          - not_null
+      - name: account_bk
+        description: Business key (account_id)
+        tests:
+          - not_null
+      - name: account_id
+        description: Account identifier
+      - name: valid_from_utc
+        description: When this version became effective
+      - name: valid_to_utc
+        description: When this version was superseded
+      - name: is_current
+        description: True for the current version
+  
+  - name: dim_instrument
+    description: |
+      Instrument dimension with SCD Type 2 history.
+      Business key: exchange:symbol:contract_month
+    columns:
+      - name: instrument_sk
+        description: Surrogate key
+        tests:
+          - unique
+          - not_null
+      - name: instrument_bk
+        description: Business key (colon-delimited)
+        tests:
+          - not_null
+      - name: instrument_id
+        description: Composite identifier
+      - name: symbol
+        description: Instrument symbol
+      - name: exchange
+        description: Exchange code
+      - name: product_type
+        description: Product type (FUT)
+      - name: contract_month
+        description: Contract month (YYYYMM)
+      - name: currency
+        description: Currency code
+      - name: multiplier
+        description: Contract multiplier
+      - name: tick_size
+        description: Minimum price increment
+      - name: valid_from_utc
+        description: When this version became effective
+      - name: valid_to_utc
+        description: When this version was superseded
+      - name: is_current
+        description: True for the current version
+
+  # ============================================
+  # Type 1 Dimensions
+  # ============================================
+  
+  - name: dim_order
+    description: |
+      Order dimension (Type 1 - no history).
+      Business key: order_id
+      
+      Captures immutable order attributes at creation time.
+      Status changes are tracked in the fact table.
+    columns:
+      - name: order_sk
+        description: Surrogate key
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: Order UUID
+        tests:
+          - unique
+          - not_null
+      - name: parent_order_id
+        description: Parent order ID (for child orders)
+      - name: client_order_id
+        description: Client-assigned ID
+      - name: broker_order_id
+        description: Broker-assigned ID
+      - name: exchange_order_id
+        description: Exchange-assigned ID
+      - name: side
+        description: BUY or SELL
+      - name: order_type
+        description: LIMIT, MARKET, etc
+      - name: time_in_force
+        description: DAY, GTC, IOC, etc
+      - name: quantity
+        description: Order quantity
+      - name: limit_price
+        description: Limit price
+      - name: stop_price
+        description: Stop price
+      - name: strategy_id
+        description: Strategy identifier
+      - name: source_system
+        description: Order source (GUI, ALGO, FIX)
+
+  # ============================================
+  # Fact Tables
+  # ============================================
+  
+  - name: fact_futures_order_event
+    description: |
+      Futures order event fact table.
+      
+      Grain: One row per order lifecycle event.
+      
+      Preserves complete event stream for forensic analysis,
+      MAR surveillance, and audit replay.
+    columns:
+      - name: event_key
+        description: Unique event identifier
+        tests:
+          - unique
+          - not_null
+      
+      - name: order_sk
+        description: FK to dim_order
+        tests:
+          - relationships:
+              to: ref('dim_order')
+              field: order_sk
+              severity: warn
+      
+      - name: event_seq
+        description: Event sequence within order
+      
+      - name: date_key
+        description: FK to dim_date
+        tests:
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+              severity: warn
+      
+      - name: time_key
+        description: FK to dim_time
+        tests:
+          - relationships:
+              to: ref('dim_time')
+              field: time_key
+              severity: warn
+      
+      - name: event_millis
+        description: Milliseconds component (0-999)
+      
+      - name: event_timestamp_utc
+        description: Full event timestamp
+      
+      - name: org_sk
+        description: FK to dim_org
+      
+      - name: trader_sk
+        description: FK to dim_trader
+      
+      - name: account_sk
+        description: FK to dim_account
+      
+      - name: instrument_sk
+        description: FK to dim_instrument
+      
+      - name: event_type
+        description: Event type (NEW, ACK, FILL, etc)
+        tests:
+          - not_null
+      
+      - name: order_status
+        description: Order status after event
+      
+      - name: filled_quantity
+        description: Total filled quantity
+      
+      - name: remaining_quantity
+        description: Remaining quantity
+      
+      - name: last_fill_qty
+        description: Last fill quantity (for fill events)
+      
+      - name: last_fill_price
+        description: Last fill price
+      
+      - name: avg_fill_price
+        description: Average fill price
+      
+      - name: best_bid
+        description: Best bid at event time
+      
+      - name: best_ask
+        description: Best ask at event time
+      
+      - name: mid_price
+        description: Mid price at event time
+      
+      - name: spread
+        description: Bid-ask spread
+      
+      - name: pre_trade_risk_check
+        description: PASS or FAIL
+      
+      - name: risk_limit_id
+        description: Risk limit identifier
+      
+      - name: current_position
+        description: Position at event time
+      
+      - name: max_position_limit
+        description: Position limit
+      
+      - name: reject_reason
+        description: Rejection reason (for REJECTED events)

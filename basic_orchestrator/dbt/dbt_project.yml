@@ -1,0 +1,39 @@
+name: surveillance
+version: '1.0.0'
+config-version: 2
+
+profile: surveillance
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Model configuration
+models:
+  surveillance:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: ephemeral
+    marts:
+      +materialized: table
+      +schema: marts
+
+# Don't fail the whole run on test failures
+flags:
+  warn_error: false
+
+tests:
+  +store_failures: true
+  +severity: warn
+
+vars:
+  # Default surrogate key for "no value" / NULL business keys
+  null_surrogate_key: -1
