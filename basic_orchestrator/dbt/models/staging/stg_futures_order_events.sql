@@ -11,6 +11,7 @@
   - Parse timestamps from ISO strings
   - Cast numeric fields with defensive safe_cast
   - Rename columns for clarity
+  - Join to load metadata for bi-temporal context
   - No business logic - that belongs in intermediate/marts
   
   All original columns preserved, just typed appropriately.
@@ -18,6 +19,10 @@
 
 with source as (
     select * from {{ source('raw', 'raw_futures_order_events') }}
+),
+
+load_meta as (
+    select * from {{ ref('stg_load_metadata') }}
 ),
 
 typed as (
@@ -83,10 +88,17 @@ typed as (
         nullif(reject_reason, '') as reject_reason,
         
         -- Load tracking
-        _load_id,
-        _extra
+        src._load_id,
+        src._extra,
         
-    from source
+        -- Bi-temporal context from load metadata
+        lm.loaded_at,
+        lm.feed_name,
+        lm.business_date,
+        lm.is_latest_for_business_date
+        
+    from source src
+    left join load_meta lm on src._load_id = lm.load_id
 )
 
 select * from typed

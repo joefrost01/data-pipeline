@@ -1,10 +1,40 @@
 version: 2
 
 models:
+  - name: stg_load_metadata
+    description: |
+      Staged load metadata with derived fields for bi-temporal processing.
+      
+      Extracts from filename:
+      - feed_name: Stable identifier (e.g., "futures_order_events")
+      - business_date: The date this data represents (explicit or inferred)
+      
+      Enables tracking which load is the "latest truth" for any feed + business date.
+    
+    columns:
+      - name: load_id
+        description: Unique load identifier
+        tests:
+          - unique
+          - not_null
+      
+      - name: feed_name
+        description: Stable feed identifier extracted from filename
+      
+      - name: business_date
+        description: Business date this data represents
+      
+      - name: loaded_at
+        description: When the file was loaded
+      
+      - name: is_latest_for_business_date
+        description: True if this is the most recent load for this feed + business date
+
   - name: stg_futures_order_events
     description: |
       Staged futures order events with defensive typing.
       One row per order lifecycle event.
+      Includes bi-temporal context from load metadata.
     
     columns:
       - name: event_timestamp_utc
@@ -72,3 +102,9 @@ models:
           - accepted_values:
               values: ['BUY', 'SELL']
               severity: warn
+      
+      - name: loaded_at
+        description: When this data was loaded (from load_metadata)
+      
+      - name: business_date
+        description: Business date this data represents

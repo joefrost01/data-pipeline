@@ -1,45 +1,12 @@
-{{
-  config(
-    materialized='incremental',
-    unique_key='fact_event_sk',
-    on_schema_change='append_new_columns',
-    partition_by={
-      "field": "date_key",
-      "data_type": "int64"
-    } if target.type == 'bigquery' else none,
-    cluster_by=['instrument_sk', 'org_sk', 'trader_sk', 'event_type'] if target.type == 'bigquery' else none,
-    post_hook="{{ close_prior_versions(this) }}"
-  )
-}}
 
-{#
-  Bi-temporal futures order event fact table.
-  
-  Grain: One row per order lifecycle event per version.
-  
-  Bi-temporality:
-  - event_timestamp_utc: When the event actually happened (business time)
-  - valid_from_utc: When we learned about this version (system time)
-  - valid_to_utc: When this version was superseded (9999-12-31 if current)
-  - is_current: Convenience flag for the latest version
-  
-  This enables "time machine" queries:
-  - Current state: WHERE is_current = true
-  - Point-in-time: WHERE valid_from_utc <= @as_of AND valid_to_utc > @as_of
-  
-  Incremental strategy:
-  1. INSERT new rows (all with valid_to = 9999-12-31, is_current = true)
-  2. POST-HOOK UPDATE: For each feed+business_date with multiple loads,
-     close earlier versions (set valid_to, is_current = false)
-  
-  This ensures versioning is always correct without full table rebuilds.
-#}
+
+
 
 with events as (
-    select * from {{ ref('stg_futures_order_events') }}
-    {% if is_incremental() %}
-    where _load_id not in (select distinct _load_id from {{ this }})
-    {% endif %}
+    select * from "dev"."main_staging"."stg_futures_order_events"
+    
+    where _load_id not in (select distinct _load_id from "dev"."main_marts"."fact_futures_order_event")
+    
 ),
 
 -- Build dimensional keys for joining
@@ -51,18 +18,40 @@ with_keys as (
         e.order_id || '|' || cast(e.event_seq as varchar) as event_bk,
         
         -- Surrogate key includes loaded_at for bi-temporal versioning
-        {{ sk(['e.order_id', 'e.event_seq', 'e.loaded_at']) }} as fact_event_sk,
+        
+  
+    
+    (hash(concat_ws('|', e.order_id, e.event_seq, e.loaded_at)) & 9223372036854775807)::bigint
+  
+ as fact_event_sk,
         
         -- Extra dimension key (-1 if no schema drift)
         case
-            when e._extra is not null then {{ sk(['e._extra']) }}
+            when e._extra is not null then 
+  
+    
+    (hash(concat_ws('|', e._extra)) & 9223372036854775807)::bigint
+  
+
             else cast(-1 as bigint)
         end as extra_sk,
 
         -- Date and time keys
-        {{ date_key_from_ts('e.event_timestamp_utc') }} as date_key,
-        {{ time_key_from_ts('e.event_timestamp_utc') }} as time_key,
-        {{ millis_from_ts('e.event_timestamp_utc') }} as event_millis,
+        
+  
+    cast(strftime(e.event_timestamp_utc, '%Y%m%d') as bigint)
+  
+ as date_key,
+        
+  
+    cast(strftime(e.event_timestamp_utc, '%H%M%S') as bigint)
+  
+ as time_key,
+        
+  
+    cast(epoch_ms(e.event_timestamp_utc) % 1000 as bigint)
+  
+ as event_millis,
 
         -- Build business keys for dimension lookups
         'Commercial Markets' || '|' ||
@@ -93,7 +82,11 @@ with_dimensions as (
 
         -- Bi-temporal fields: new rows start as "current"
         k.loaded_at as valid_from_utc,
-        {{ end_of_time() }} as valid_to_utc,
+        
+  
+    '9999-12-31 23:59:59'::timestamp
+  
+ as valid_to_utc,
         true as is_current,
         k.business_date,
 
@@ -141,26 +134,26 @@ with_dimensions as (
     from with_keys k
 
     -- Order dimension
-    left join {{ ref('dim_order') }} o
+    left join "dev"."main_marts"."dim_order" o
         on k.order_id = o.order_id
 
     -- Org dimension (SCD2 - join to current)
-    left join {{ ref('dim_org') }} org
+    left join "dev"."main_marts"."dim_org" org
         on k.org_bk = org.org_bk
         and org.is_current = true
 
     -- Trader dimension (SCD2)
-    left join {{ ref('dim_trader') }} t
+    left join "dev"."main_marts"."dim_trader" t
         on k.trader_bk = t.trader_bk
         and t.is_current = true
 
     -- Account dimension (SCD2)
-    left join {{ ref('dim_account') }} a
+    left join "dev"."main_marts"."dim_account" a
         on k.account_bk = a.account_bk
         and a.is_current = true
 
     -- Instrument dimension (SCD2)
-    left join {{ ref('dim_instrument') }} i
+    left join "dev"."main_marts"."dim_instrument" i
         on k.instrument_bk = i.instrument_bk
         and i.is_current = true
 )

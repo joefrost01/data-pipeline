@@ -9,6 +9,10 @@ with source as (
     select * from "dev"."main"."raw_futures_order_events"
 ),
 
+load_meta as (
+    select * from "dev"."main_staging"."stg_load_metadata"
+),
+
 typed as (
     select
         -- Event identification
@@ -144,10 +148,17 @@ typed as (
         nullif(reject_reason, '') as reject_reason,
         
         -- Load tracking
-        _load_id,
-        _extra
+        src._load_id,
+        src._extra,
         
-    from source
+        -- Bi-temporal context from load metadata
+        lm.loaded_at,
+        lm.feed_name,
+        lm.business_date,
+        lm.is_latest_for_business_date
+        
+    from source src
+    left join load_meta lm on src._load_id = lm.load_id
 )
 
 select * from typed

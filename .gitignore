@@ -1,3 +1,2 @@
-/basic_orchestrator/dbt/dev.duckdb
-/basic_orchestrator/dbt/dev.duckdb.wal
 /basic_orchestrator/dbt/.user.yml
+/basic_orchestrator/dev.duckdb

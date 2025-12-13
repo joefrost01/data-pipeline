@@ -87,7 +87,7 @@ log = StructuredLogger(__name__)
 def create_components(config: Config) -> tuple[Storage, DataLoader] | tuple[None, None]:
     """
     Create storage and loader, returning (None, None) on failure.
-
+    
     This allows the main loop to continue and retry next cycle
     rather than crashing on transient infrastructure issues.
     """
@@ -132,19 +132,19 @@ def prepare_dataframe(
 ) -> pl.DataFrame:
     """
     Prepare a DataFrame for loading, handling schema drift.
-
+    
     Schema drift handling:
     - If table doesn't exist (existing_columns is None): All columns become the schema
     - If table exists: Known columns load normally, new columns go to _extra JSON field
     - Missing expected columns are filled with NULL
-
+    
     This allows new attributes to be used immediately via JSON extraction,
     without requiring schema changes or code deployments.
-
+    
     Args:
         df: Raw DataFrame from CSV
         existing_columns: List of columns in existing table, or None if new table
-
+    
     Returns:
         DataFrame ready for loading with _extra column
     """
@@ -152,38 +152,38 @@ def prepare_dataframe(
         # First load - all columns become the baseline schema
         # Add empty _extra column for consistency
         return df.with_columns(pl.lit(None).cast(pl.Utf8).alias("_extra"))
-
+    
     # Determine which columns are known vs new
     actual_columns = set(df.columns)
     expected_columns = set(existing_columns)
-
+    
     known = [col for col in df.columns if col in expected_columns]
     extra = [col for col in df.columns if col not in expected_columns]
-
+    
     # Handle extra columns by serialising to JSON
     if extra:
         # Build JSON object from extra columns for each row
         extra_data = df.select(extra).to_dicts()
         extra_json = [json.dumps(row) for row in extra_data]
-
+        
         # Select known columns and add _extra
         df = df.select(known).with_columns(
             pl.Series("_extra", extra_json)
         )
-
+        
         log.info(f"  New columns captured in _extra: {extra}")
     else:
         # No extra columns - add null _extra
         df = df.select(known).with_columns(
             pl.lit(None).cast(pl.Utf8).alias("_extra")
         )
-
+    
     # Add NULL for any expected columns missing from this file
     for col in existing_columns:
         if col not in df.columns:
             df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
             log.info(f"  Missing column filled with NULL: {col}")
-
+    
     return df
 
 
@@ -197,7 +197,7 @@ def load_file(
 ) -> dict[str, Any]:
     """
     Load a single file into the data warehouse.
-
+    
     Process:
     1. Resolve filename to table configuration
     2. Check for go file if required (skip if not yet available)
@@ -209,7 +209,7 @@ def load_file(
     8. Load into target table
     9. Record metadata
     10. Archive the file (and go file if applicable)
-
+    
     Args:
         path: Full path to the data file
         storage: Storage implementation
@@ -217,7 +217,7 @@ def load_file(
         config: Application configuration
         mapping: Table mapping configuration
         available_files: All files in landing directory (for go file matching)
-
+    
     Returns:
         Dict with keys: success, filename, table, rows, duration, error
     """
@@ -259,21 +259,21 @@ def load_file(
         # Read CSV
         data = storage.read_file(path)
         df = pl.read_csv(data, infer_schema_length=0)
-
+        
         log.info(f"  Read {len(df):,} rows, {len(df.columns)} columns")
-
+        
         # Handle trailer record validation if configured
         if table_config.trailer:
             df, validation = process_with_trailer(
                 df,
                 table_config.trailer.row_count_column
             )
-
+            
             if not validation.valid:
                 result["error"] = f"Trailer validation: {validation.error}"
                 storage.move(path, storage.join(config.failed_path, filename))
                 return result
-
+        
         # Go file validation
         if table_config.go_file and go_path:
             validation = validate_with_go_file(
@@ -283,18 +283,18 @@ def load_file(
                 result["error"] = f"Go file validation: {validation.error}"
                 storage.move(path, storage.join(config.failed_path, filename))
                 return result
-
+        
         # Schema drift handling
         existing_columns = loader.get_columns(table_config.table)
         df = prepare_dataframe(df, existing_columns)
         df = df.with_columns(pl.lit(load_id).alias("_load_id"))
-
+        
         # Load
         result["rows"] = len(df)
         loader.load(df, table_config.table)
-
+        
         completed_at = datetime.now(timezone.utc)
-
+        
         # Record metadata
         loader.record_metadata(LoadResult(
             load_id=load_id,
@@ -304,15 +304,15 @@ def load_file(
             started_at=started_at,
             completed_at=completed_at,
         ))
-
+        
         # Archive
         storage.move(path, storage.join(config.archive_path, filename))
-
+        
         # Archive go file too if present
         if go_path:
             go_filename = Path(go_path).name
             storage.move(go_path, storage.join(config.archive_path, go_filename))
-
+        
         result["success"] = True
         result["duration_seconds"] = (completed_at - started_at).total_seconds()
 
@@ -343,7 +343,7 @@ def load_all(
 ) -> dict[str, Any]:
     """
     Load all files, returning aggregate results.
-
+    
     Never raises - all errors are captured in the results dict.
     """
     results = {
@@ -354,7 +354,7 @@ def load_all(
         "total_rows": 0,
         "failures": [],
     }
-
+    
     with ThreadPoolExecutor(max_workers=config.workers) as executor:
         # Submit all files for processing
         future_to_file = {
@@ -401,16 +401,16 @@ def load_all(
                     error=str(e),
                     error_type=type(e).__name__,
                 )
-
+    
     return results
 
 
 def run_dbt(dbt_project_dir: str | None = None) -> dict[str, Any]:
     """
     Run dbt with resilience.
-
+    
     Returns result dict rather than bool, captures all output.
-
+    
     Args:
         dbt_project_dir: Path to dbt project directory. If None, runs from current dir.
     """
@@ -420,16 +420,16 @@ def run_dbt(dbt_project_dir: str | None = None) -> dict[str, Any]:
         "duration_seconds": 0,
         "error": None,
     }
-
+    
     started_at = datetime.now(timezone.utc)
-
+    
     try:
         # Create environment for dbt subprocess
         # Remove DUCKDB_PATH so dbt uses its profiles.yml default (../dev.duckdb)
         # This ensures both orchestrator and dbt use the same database file
         dbt_env = os.environ.copy()
         dbt_env.pop("DUCKDB_PATH", None)
-
+        
         proc = subprocess.run(
             ["dbt", "run", "--no-fail-fast", "--profiles-dir", "."],  # Use profiles.yml from project dir
             capture_output=True,
@@ -470,7 +470,7 @@ def run_dbt(dbt_project_dir: str | None = None) -> dict[str, Any]:
             error=str(e),
             error_type=type(e).__name__,
         )
-
+    
     result["duration_seconds"] = (datetime.now(timezone.utc) - started_at).total_seconds()
     return result
 
@@ -478,15 +478,15 @@ def run_dbt(dbt_project_dir: str | None = None) -> dict[str, Any]:
 def get_data_files(files: list[str], mapping: dict[str, TableConfig]) -> list[str]:
     """
     Filter file list to only include data files (not go/control files).
-
+    
     Go files and control files are processed alongside their data files,
     not independently. This function identifies which files are actual
     data files that should be processed.
-
+    
     Args:
         files: All files in the landing directory
         mapping: Table mapping configuration
-
+    
     Returns:
         List of data file paths
     """
@@ -495,7 +495,7 @@ def get_data_files(files: list[str], mapping: dict[str, TableConfig]) -> list[st
     for table_config in mapping.values():
         if table_config.go_file:
             go_patterns.add(table_config.go_file.pattern)
-
+    
     import fnmatch
     data_files = []
     for filepath in files:
@@ -503,19 +503,19 @@ def get_data_files(files: list[str], mapping: dict[str, TableConfig]) -> list[st
         is_go_file = any(fnmatch.fnmatch(filename, p) for p in go_patterns)
         if not is_go_file:
             data_files.append(filepath)
-
+    
     return data_files
 
 
 def main() -> None:
     """
     Main loop - designed to never die.
-
+    
     Every operation is wrapped in try/catch. Infrastructure failures
     cause a retry next cycle. The loop only exits on SIGTERM/SIGINT.
     """
     log.info("Orchestrator starting")
-
+    
     # Load config - this can fail, but we retry
     config = None
     while config is None:
@@ -528,18 +528,18 @@ def main() -> None:
                 error_type=type(e).__name__,
             )
             time.sleep(30)
-
+    
     log.info(
         "Configuration loaded",
         backend=config.backend,
         workers=config.workers,
         landing_path=config.landing_path,
     )
-
+    
     # Track consecutive infrastructure failures for backoff
     consecutive_infra_failures = 0
     max_backoff_seconds = 300  # 5 minutes max
-
+    
     while True:
         cycle_start = datetime.now(timezone.utc)
 
@@ -572,7 +572,7 @@ def main() -> None:
                 )
                 time.sleep(30)
                 continue
-
+            
             # List files
             try:
                 all_files = storage.list_files(config.landing_path)
@@ -584,28 +584,28 @@ def main() -> None:
                 )
                 time.sleep(30)
                 continue
-
+            
             # Filter and process
             data_files = get_data_files(all_files, mapping)
-
+            
             if data_files:
                 log.info(
                     "Processing batch",
                     file_count=len(data_files),
                     total_files_in_landing=len(all_files),
                 )
-
+                
                 # Load files
                 load_results = load_all(
                     data_files, storage, loader, config, mapping, all_files
                 )
-
+                
                 # Run dbt (even if some loads failed - process what we can)
                 if load_results["succeeded"] > 0:
                     # Close DuckDB connection before running dbt to ensure all writes are visible
                     if hasattr(loader, 'conn'):
                         loader.conn.close()
-
+                    
                     dbt_path = os.environ.get("DBT_PROJECT_PATH", "./dbt")
                     dbt_result = run_dbt(dbt_project_dir=dbt_path)
                 else:

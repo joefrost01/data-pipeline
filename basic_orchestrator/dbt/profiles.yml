@@ -12,14 +12,14 @@
 
 surveillance:
   target: dev
-
+  
   outputs:
     # Local development with DuckDB
     dev:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH', '../dev.duckdb') }}"
       threads: 4
-
+    
     # Production with BigQuery
     prod:
       type: bigquery

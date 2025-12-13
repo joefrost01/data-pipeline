@@ -224,18 +224,46 @@ models:
   
   - name: fact_futures_order_event
     description: |
-      Futures order event fact table.
+      Bi-temporal futures order event fact table.
       
-      Grain: One row per order lifecycle event.
+      Grain: One row per order lifecycle event per version.
       
-      Preserves complete event stream for forensic analysis,
-      MAR surveillance, and audit replay.
+      Bi-temporality:
+      - event_timestamp_utc: When the event happened (business time)
+      - valid_from_utc: When we learned about this version (system time)
+      - valid_to_utc: When this version was superseded (9999-12-31 if current)
+      
+      For day-to-day analytics, use fact_futures_order_event_current view.
+      For time-travel queries, filter on valid_from/to.
     columns:
-      - name: event_key
-        description: Unique event identifier
+      - name: fact_event_sk
+        description: Unique surrogate key (includes version)
         tests:
           - unique
           - not_null
+      
+      - name: event_bk
+        description: Business key (order_id|event_seq)
+        tests:
+          - not_null
+      
+      - name: valid_from_utc
+        description: When this version became truth
+        tests:
+          - not_null
+      
+      - name: valid_to_utc
+        description: When this version was superseded
+        tests:
+          - not_null
+      
+      - name: is_current
+        description: True for the latest version
+        tests:
+          - not_null
+      
+      - name: business_date
+        description: Business date this data represents
       
       - name: order_sk
         description: FK to dim_order
@@ -282,52 +310,109 @@ models:
       - name: instrument_sk
         description: FK to dim_instrument
       
+      - name: extra_sk
+        description: FK to dim_extra (-1 if no schema drift)
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_extra')
+              field: extra_sk
+
       - name: event_type
         description: Event type (NEW, ACK, FILL, etc)
         tests:
           - not_null
-      
+
       - name: order_status
         description: Order status after event
-      
+
       - name: filled_quantity
         description: Total filled quantity
-      
+
       - name: remaining_quantity
         description: Remaining quantity
-      
+
       - name: last_fill_qty
         description: Last fill quantity (for fill events)
-      
+
       - name: last_fill_price
         description: Last fill price
-      
+
       - name: avg_fill_price
         description: Average fill price
-      
+
       - name: best_bid
         description: Best bid at event time
-      
+
       - name: best_ask
         description: Best ask at event time
-      
+
       - name: mid_price
         description: Mid price at event time
-      
+
       - name: spread
         description: Bid-ask spread
-      
+
       - name: pre_trade_risk_check
         description: PASS or FAIL
-      
+
       - name: risk_limit_id
         description: Risk limit identifier
-      
+
       - name: current_position
         description: Position at event time
-      
+
       - name: max_position_limit
         description: Position limit
-      
+
       - name: reject_reason
         description: Rejection reason (for REJECTED events)
+
+      - name: _load_id
+        description: Load identifier for lineage
+
+      - name: feed_name
+        description: Source feed name
+
+  - name: fact_futures_order_event_current
+    description: |
+      Current view of futures order events.
+      
+      Filters the bi-temporal fact table to show only the latest version.
+      Use this for day-to-day analytics to avoid double-counting.
+    columns:
+      - name: fact_event_sk
+        description: Unique event identifier
+        tests:
+          - unique
+          - not_null
+
+      - name: event_bk
+        description: Business key (order_id|event_seq)
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_extra
+    description: |
+      Sparse dimension for schema drift.
+      
+      Only stores distinct _extra JSON values. Fact table gets FK (extra_sk).
+      Many fact rows can point to one dim_extra row if they have identical _extra.
+      
+      Includes sentinel row (extra_sk = -1, _extra = NULL) for "no schema drift".
+      
+      Query pattern:
+        SELECT f.*, e._extra
+        FROM fact_futures_order_event f
+        JOIN dim_extra e ON f.extra_sk = e.extra_sk
+        WHERE e.extra_sk != -1  -- Exclude "no drift" rows if needed
+    columns:
+      - name: extra_sk
+        description: Surrogate key (hash of _extra content, or -1 for sentinel)
+        tests:
+          - unique
+          - not_null
+
+      - name: _extra
+        description: JSON containing unexpected columns from source (NULL for sentinel row)
