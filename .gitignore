@@ -1,2 +1,3 @@
 /basic_orchestrator/dbt/.user.yml
 /basic_orchestrator/dev.duckdb
+/basic_orchestrator/dbt/target/
