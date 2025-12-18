@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: order_financial_markets
+    description: |
+      Curated futures order data - One Big Table with nested structs.
+      
+      Grain: One row per order (OrderMessageID) per version.
+      Events are nested as a repeated struct array.
+      Bi-temporal at order level.
+      
+      Structure:
+      ```
+      ├── Type: "Master.Transaction"
+      ├── ExtractDate
+      ├── Execution STRUCT
+      │   ├── Type, OrderMessageID, OrderStartDate, OrderEndDate, TraderID
+      │   ├── Economics STRUCT (Type, AssetType, Amount, ContractSize, Price, PriceCurrency)
+      │   ├── Identifier STRUCT (Type, Exchange, Ticker, MonthCode, YearCode)
+      │   └── Events ARRAY<STRUCT> (Type, EventID, EventDateTime, Price, PriceType, Amount, Counterparty)
+      ├── Unit STRUCT (Type, BookName, BusinessUnit, Region)
+      ├── valid_from_utc, valid_to_utc (bi-temporal)
+      └── is_current
+      ```
+    
+    columns:
+      - name: Type
+        description: "Record type: Master.Transaction"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Master.Transaction']
+      
+      - name: ExtractDate
+        description: Date the data was extracted
+        tests:
+          - not_null
+      
+      - name: Execution
+        description: Order execution details (nested struct)
+      
+      - name: Unit
+        description: Organisational unit (nested struct)
+      
+      - name: valid_from_utc
+        description: Bi-temporal - when this version became truth
+        tests:
+          - not_null
+      
+      - name: valid_to_utc
+        description: Bi-temporal - when superseded (9999-12-31 if current)
+        tests:
+          - not_null
+      
+      - name: is_current
+        description: True for latest version of this order
+        tests:
+          - not_null

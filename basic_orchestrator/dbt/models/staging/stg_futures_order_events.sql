@@ -1,20 +1,17 @@
 {{
-  config(
-    materialized='view'
-  )
+    config(
+        materialized='view',
+        schema=var('staging_dataset', 'surveillance_staging')
+    )
 }}
 
 {#
-  Staging layer for futures order events.
-  
-  Responsibilities:
-  - Parse timestamps from ISO strings
-  - Cast numeric fields with defensive safe_cast
-  - Rename columns for clarity
-  - Join to load metadata for bi-temporal context
-  - No business logic - that belongs in intermediate/marts
-  
-  All original columns preserved, just typed appropriately.
+    Staged futures order events with proper typing.
+    
+    Transforms raw string columns to appropriate types using safe casts.
+    Joins to load metadata for lineage tracking.
+    
+    Grain: One row per event (same as raw)
 #}
 
 with source as (
@@ -27,75 +24,49 @@ load_meta as (
 
 typed as (
     select
-        -- Event identification
-        {{ safe_cast('event_timestamp', 'timestamp') }} as event_timestamp_utc,
-        {{ safe_cast('event_seq', 'integer') }} as event_seq,
-        event_type,
-        order_status,
-        
-        -- Order identifiers
-        order_id,
-        nullif(parent_order_id, '') as parent_order_id,
-        client_order_id,
-        broker_order_id,
-        exchange_order_id,
-        
-        -- Organisation
-        account_id,
-        trader_id,
-        desk,
-        book,
-        
-        -- Strategy / source
-        strategy_id,
-        source_system,
+        -- Order identification
+        {{ safe_cast('src.ExtractDate', 'DATE') }} as extract_date,
+        src.OrderMessageID as order_message_id,
+        {{ safe_cast('src.EventSeq', 'INT64') }} as event_seq,
+        {{ safe_cast('src.OrderStartDate', 'TIMESTAMP') }} as order_start_date,
+        {{ safe_cast('src.OrderEndDate', 'TIMESTAMP') }} as order_end_date,
+        src.TraderID as trader_id,
         
         -- Instrument
-        symbol,
-        exchange,
-        product_type,
-        contract_month,
-        currency,
-        {{ safe_cast('multiplier', 'integer') }} as multiplier,
-        {{ safe_cast('tick_size', 'numeric') }} as tick_size,
+        src.InstrumentExchange as instrument_exchange,
+        src.InstrumentTicker as instrument_ticker,
+        src.InstrumentMonthCode as instrument_month_code,
+        src.InstrumentYearCode as instrument_year_code,
         
-        -- Order parameters
-        side,
-        order_type,
-        time_in_force,
-        {{ safe_cast('quantity', 'integer') }} as quantity,
-        {{ safe_cast('limit_price', 'numeric') }} as limit_price,
-        {{ safe_cast('stop_price', 'numeric') }} as stop_price,
+        -- Economics
+        {{ safe_cast('src.EconomicsAmount', 'FLOAT64') }} as economics_amount,
+        {{ safe_cast('src.EconomicsContractSize', 'INT64') }} as economics_contract_size,
+        {{ safe_cast('src.OrderPrice', 'FLOAT64') }} as order_price,
+        src.PriceCurrency as price_currency,
         
-        -- Market data at event time
-        {{ safe_cast('best_bid', 'numeric') }} as best_bid,
-        {{ safe_cast('best_ask', 'numeric') }} as best_ask,
-        {{ safe_cast('mid_price', 'numeric') }} as mid_price,
-        {{ safe_cast('spread', 'numeric') }} as spread,
+        -- Event
+        src.EventType as event_type,
+        {{ safe_cast('src.EventDateTime', 'TIMESTAMP') }} as event_date_time,
+        {{ safe_cast('src.EventPrice', 'FLOAT64') }} as event_price,
+        src.EventPriceType as event_price_type,
+        {{ safe_cast('src.EventAmount', 'FLOAT64') }} as event_amount,
         
-        -- Fill information
-        {{ safe_cast('filled_quantity', 'integer') }} as filled_quantity,
-        {{ safe_cast('remaining_quantity', 'integer') }} as remaining_quantity,
-        {{ safe_cast('last_fill_qty', 'integer') }} as last_fill_qty,
-        {{ safe_cast('last_fill_price', 'numeric') }} as last_fill_price,
-        {{ safe_cast('avg_fill_price', 'numeric') }} as avg_fill_price,
+        -- Counterparty
+        src.CounterpartyType as counterparty_type,
+        src.CounterpartyName as counterparty_name,
+        src.CounterpartyCode as counterparty_code,
         
-        -- Risk
-        pre_trade_risk_check,
-        nullif(risk_limit_id, '') as risk_limit_id,
-        {{ safe_cast('current_position', 'integer') }} as current_position,
-        {{ safe_cast('max_position_limit', 'integer') }} as max_position_limit,
-        nullif(reject_reason, '') as reject_reason,
+        -- Unit
+        src.BookName as book_name,
+        src.BusinessUnit as business_unit,
+        src.Region as region,
         
         -- Load tracking
         src._load_id,
         src._extra,
-        
-        -- Bi-temporal context from load metadata
         lm.loaded_at,
-        lm.feed_name,
-        lm.business_date,
-        lm.is_latest_for_business_date
+        lm.business_date as load_business_date,
+        lm.is_latest as is_latest_load
         
     from source src
     left join load_meta lm on src._load_id = lm.load_id

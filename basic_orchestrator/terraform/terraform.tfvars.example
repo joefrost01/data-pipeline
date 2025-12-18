@@ -1,0 +1,5 @@
+project_id      = "your-gcp-project"
+region          = "europe-west2"
+environment     = "prod"
+bq_location     = "EU"
+bucket_location = "EU"

@@ -2,118 +2,34 @@ version: 2
 
 sources:
   - name: raw
-    description: Raw data loaded by the orchestrator
-    schema: "{{ target.schema }}"  # Same schema in dev, configurable in prod
+    description: Raw data loaded from CSV files
+    schema: "{% if target.type == 'duckdb' %}main{% else %}{{ var('raw_dataset', 'surveillance_raw') }}{% endif %}"
+    database: "{% if target.type == 'bigquery' %}{{ var('project_id', '') }}{% endif %}"
     
     tables:
       - name: raw_futures_order_events
         description: |
-          Raw futures order lifecycle events loaded from CSV.
-          One row per event (NEW, ACK, PARTIAL_FILL, FILL, CANCEL, REJECT).
-          All columns are strings - typing happens in staging.
-        
+          Raw futures order events loaded from CSV.
+          One row per event (fill, amend, cancel etc).
+          All columns are strings for flexibility.
         columns:
-          - name: event_timestamp
-            description: ISO timestamp of the event
-          - name: event_seq
-            description: Sequence number within the order
-          - name: event_type
-            description: Event type (NEW, ACK, PARTIAL_FILL, FILL, CANCEL, REJECT, SENT)
-          - name: order_status
-            description: Order status after this event
-          - name: order_id
-            description: Unique order identifier (UUID)
-          - name: parent_order_id
-            description: Parent order ID for child orders
-          - name: client_order_id
-            description: Client-assigned order ID
-          - name: broker_order_id
-            description: Broker-assigned order ID
-          - name: exchange_order_id
-            description: Exchange-assigned order ID
-          - name: account_id
-            description: Trading account identifier
-          - name: trader_id
-            description: Trader identifier
-          - name: desk
-            description: Trading desk
-          - name: book
-            description: Trading book
-          - name: strategy_id
-            description: Strategy identifier
-          - name: source_system
-            description: Order source (GUI, ALGO, FIX)
-          - name: symbol
-            description: Instrument symbol
-          - name: exchange
-            description: Exchange code
-          - name: product_type
-            description: Product type (FUT)
-          - name: contract_month
-            description: Contract month (YYYYMM)
-          - name: currency
-            description: Currency code
-          - name: multiplier
-            description: Contract multiplier
-          - name: tick_size
-            description: Minimum price increment
-          - name: side
-            description: Order side (BUY, SELL)
-          - name: order_type
-            description: Order type (LIMIT, MARKET, etc)
-          - name: time_in_force
-            description: Time in force (DAY, GTC, IOC, etc)
-          - name: quantity
-            description: Order quantity
-          - name: limit_price
-            description: Limit price
-          - name: stop_price
-            description: Stop price
-          - name: best_bid
-            description: Best bid at time of event
-          - name: best_ask
-            description: Best ask at time of event
-          - name: mid_price
-            description: Mid price at time of event
-          - name: spread
-            description: Bid-ask spread
-          - name: filled_quantity
-            description: Total filled quantity
-          - name: remaining_quantity
-            description: Remaining quantity
-          - name: last_fill_qty
-            description: Last fill quantity
-          - name: last_fill_price
-            description: Last fill price
-          - name: avg_fill_price
-            description: Average fill price
-          - name: pre_trade_risk_check
-            description: Pre-trade risk check result (PASS, FAIL)
-          - name: risk_limit_id
-            description: Risk limit identifier
-          - name: current_position
-            description: Current position
-          - name: max_position_limit
-            description: Maximum position limit
-          - name: reject_reason
-            description: Rejection reason if rejected
+          - name: ExtractDate
+            description: Date the data was extracted
+          - name: OrderMessageID
+            description: Unique order identifier
+          - name: EventSeq
+            description: Event sequence number within order
           - name: _load_id
-            description: Load tracking ID (added by orchestrator)
-          - name: _extra
-            description: JSON field for schema drift columns
-      
+            description: Load batch identifier for lineage
+        
       - name: load_metadata
-        description: Load tracking metadata from orchestrator
+        description: |
+          Tracks every file load.
+          Used for lineage and incremental processing.
         columns:
           - name: load_id
             description: Unique load identifier
           - name: filename
             description: Source filename
-          - name: table_name
-            description: Target table
           - name: row_count
-            description: Rows loaded
-          - name: started_at
-            description: Load start time
-          - name: completed_at
-            description: Load completion time
+            description: Number of rows loaded

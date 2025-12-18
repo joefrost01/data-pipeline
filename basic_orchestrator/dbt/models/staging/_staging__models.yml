@@ -3,108 +3,41 @@ version: 2
 models:
   - name: stg_load_metadata
     description: |
-      Staged load metadata with derived fields for bi-temporal processing.
+      Staged load metadata with derived fields.
       
-      Extracts from filename:
-      - feed_name: Stable identifier (e.g., "futures_order_events")
-      - business_date: The date this data represents (explicit or inferred)
-      
-      Enables tracking which load is the "latest truth" for any feed + business date.
-    
+      Extracts feed_name and business_date from the filename.
+      Calculates version_rank to identify the latest load per feed/date.
     columns:
       - name: load_id
         description: Unique load identifier
         tests:
           - unique
           - not_null
-      
       - name: feed_name
-        description: Stable feed identifier extracted from filename
-      
+        description: Stable feed identifier derived from filename
       - name: business_date
-        description: Business date this data represents
-      
-      - name: loaded_at
-        description: When the file was loaded
-      
-      - name: is_latest_for_business_date
-        description: True if this is the most recent load for this feed + business date
+        description: Business date derived from filename or load time
+      - name: is_latest
+        description: True if this is the latest load for feed/date combo
 
   - name: stg_futures_order_events
     description: |
-      Staged futures order events with defensive typing.
-      One row per order lifecycle event.
-      Includes bi-temporal context from load metadata.
-    
+      Staged futures order events with proper typing.
+      
+      Grain: One row per event (same as raw)
+      
+      All string columns cast to appropriate types using safe casts.
+      Joined to load metadata for lineage tracking.
     columns:
-      - name: event_timestamp_utc
-        description: Event timestamp in UTC
-        tests:
-          - not_null:
-              severity: warn
-      
-      - name: event_seq
-        description: Sequence number within the order
-        tests:
-          - not_null:
-              severity: warn
-      
-      - name: event_type
-        description: Event type
-        tests:
-          - not_null:
-              severity: warn
-          - accepted_values:
-              values: ['NEW', 'SENT', 'ACK', 'PARTIAL_FILL', 'FILL', 'CANCEL', 'REJECTED']
-              severity: warn
-      
-      - name: order_id
+      - name: order_message_id
         description: Unique order identifier
         tests:
-          - not_null:
-              severity: warn
-      
-      - name: trader_id
-        description: Trader identifier
+          - not_null
+      - name: event_seq
+        description: Event sequence number within order
         tests:
-          - not_null:
-              severity: warn
-      
-      - name: desk
-        description: Trading desk
-        tests:
-          - not_null:
-              severity: warn
-      
-      - name: book
-        description: Trading book
-        tests:
-          - not_null:
-              severity: warn
-      
-      - name: symbol
-        description: Instrument symbol
-        tests:
-          - not_null:
-              severity: warn
-      
-      - name: exchange
-        description: Exchange code
-        tests:
-          - not_null:
-              severity: warn
-      
-      - name: side
-        description: Order side
-        tests:
-          - not_null:
-              severity: warn
-          - accepted_values:
-              values: ['BUY', 'SELL']
-              severity: warn
-      
-      - name: loaded_at
-        description: When this data was loaded (from load_metadata)
-      
-      - name: business_date
-        description: Business date this data represents
+          - not_null
+      - name: extract_date
+        description: Date the data was extracted
+      - name: _load_id
+        description: Load batch identifier for lineage
